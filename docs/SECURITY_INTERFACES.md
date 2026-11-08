@@ -227,12 +227,11 @@ on-disk log files, future telemetry endpoint.
 
 ## Closing notes
 
-This document is the audit-acknowledged baseline. It will be
-revised when:
+This document is the baseline acknowledged by the internal security review (see `SECURITY_REVIEW.md`); it is not a third-party audit. It will be revised when:
 - A new subsystem is added to the node (new section).
-- An audit fiche specifically targeting one of the above
+- A review finding specifically targeting one of the above
   subsystems lands (the section is updated to reference the
-  fiche ID).
+  finding ID).
 - A test from the "Tests required" lists is implemented (the
   list entry is updated to link the test).
 

@@ -162,7 +162,7 @@ set. RustSec lists no advisory for redb (checked 2026-08-02).
 ### Mechanical anchor
 
 Two anchors. `deny.toml` pins the accepted envelope to exactly
-the audited 4.1.x line as the conventional record. The enforced
+the reviewed 4.1.x line as the conventional record. The enforced
 one is `crates/arxia-storage-redb/tests/version_pin.rs`, which
 reads the resolved version out of `Cargo.lock` and fails the
 suite if redb drifts off 4.1.x — nothing in CI runs cargo-deny

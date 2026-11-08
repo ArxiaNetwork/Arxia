@@ -35,7 +35,7 @@ the need for a leader election protocol.
 When partitioned networks reconnect:
 1. Exchange nonce registries (compact: ~40 bytes per account)
 2. Detect conflicts (same account, same nonce, different hash)
-3. Resolve via ORV 3-tier cascade
+3. Keep exactly one block per account sequence number, chosen the same way on every node (today by block hash; the stake-weighted ORV cascade in `arxia-consensus` is implemented as a library but not yet called by reconciliation)
 4. Merge CRDT state (mathematically guaranteed convergence)
 
 ### Partition Tolerance
@@ -48,20 +48,21 @@ consistency (CRDTs converge after partition heals).
 
 | Feature           | Nano                  | Arxia                      |
 |-------------------|-----------------------|----------------------------|
-| Transport         | TCP/IP only           | LoRa, BLE, SMS, Satellite  |
+| Transport         | TCP/IP only           | LoRa first; BLE, SMS, satellite planned (simulated in code today) |
 | Consensus         | ORV (online)          | ORV + CRDT (offline-first) |
-| Conflict handling | Online resolution     | 3-tier cascade + offline   |
-| Smart contracts   | None                  | WASM runtime               |
-| Identity          | Account-based         | W3C DID                    |
-| Target devices    | Servers               | ESP32, mobile phones       |
+| Conflict handling | Online resolution     | Duplicate rejection, then reconciliation when partitions rejoin |
+| Identity          | Account-based         | did:arxia identifiers (W3C DID syntax) |
+| Target devices    | Servers               | ESP32 boards (T-Beam class) |
 
 ## Comparison with Bitcoin
+
+This table compares consensus designs only. Arxia is an offline settlement layer: the result anchors to an existing chain when a connection returns. The settlement layer is a direction we have committed to, not code that exists today. We will show it when it runs.
 
 | Feature           | Bitcoin               | Arxia                      |
 |-------------------|-----------------------|----------------------------|
 | Structure         | Linear chain          | Block lattice (DAG)        |
 | Consensus         | Proof of Work         | ORV (stake-weighted)       |
-| Finality          | Probabilistic (~60m)  | Progressive (L0-L2)        |
+| Finality          | Probabilistic (~60m)  | Progressive (Local, Mesh, full consensus) |
 | Offline use       | Not possible          | Core design principle      |
 | Energy            | High                  | Negligible                 |
 | Block size        | 1-4 MB                | 193 bytes                  |
