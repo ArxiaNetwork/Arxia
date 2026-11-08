@@ -177,8 +177,7 @@ local:  ((account_A, 5), hash=0xabc...)
 remote: ((account_A, 5), hash=0xdef...)  // → NonceConflict
 ```
 
-Resolution is the consensus layer's job (ORV vote, then hash
-tiebreaker — see `FINALITY_MODEL.md` §6).
+Resolution is left to the caller (§2). The stake-weighted resolver `arxia-consensus::conflict::resolve_conflict_orv` is implemented as a library, but nothing calls it yet; partition reconciliation keeps the block with the smaller hash (see `FINALITY_MODEL.md` §6.3 and §7).
 
 ---
 

@@ -439,7 +439,7 @@ A block that has been the **loser** of a reconciled conflict cannot
 subsequently be promoted past `Pending`. From the perspective of
 `assess_finality`, the block's account chain will surface
 `SyncResult::Mismatch(n)` for that block, blocking `L1`, and no
-well-behaved validator will sign an ORV vote for it, blocking `L2`.
+well-behaved validator will sign a validator vote (`SignedValidatorVote`) for it, blocking `L2`.
 
 ---
 

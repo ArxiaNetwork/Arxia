@@ -39,6 +39,8 @@ When two blocks conflict (same account, same nonce):
 3. **Hash tiebreaker**: Lexicographically smaller block hash wins.
    Deterministic and requires no additional communication.
 
+The stake-weighted resolver `arxia-consensus::conflict::resolve_conflict_orv` is implemented as a library, but nothing calls it yet. When partitions rejoin, reconciliation keeps exactly one block per account sequence number, chosen the same way on every node; today that choice is made by block hash.
+
 ## Quorum Requirements
 
 - At least 2/3 of known representatives must have voted

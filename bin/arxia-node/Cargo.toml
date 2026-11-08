@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Arxia node binary (stub; a running node is in progress)"
+description = "Arxia node binary (stub; no running node yet)"
 authors = []
 
 [[bin]]

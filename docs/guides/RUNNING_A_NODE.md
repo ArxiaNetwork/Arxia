@@ -35,7 +35,7 @@ The reference board is a T-Beam class ESP32 with a LoRa radio, costing tens of d
 
 ## Stake and rewards
 
-No stake locking, reward or fee mechanism is implemented. Stake appears in the code only as an input to representative voting: votes whose delegated stake is below 0.1% of total supply are filtered out by `collect_votes` (`MIN_REPRESENTATIVE_STAKE_DENOM` in `crates/arxia-consensus/src/orv.rs`).
+No stake locking, reward or fee mechanism is implemented. Stake appears in the code only as a voting weight: votes whose delegated stake is below 0.1% of total supply are filtered out by `collect_votes` (`MIN_REPRESENTATIVE_STAKE_DENOM` in `crates/arxia-consensus/src/orv.rs`), and full consensus counts signed votes from registered validators holding at least 67% of registered stake (`ValidatorRegistry` in `crates/arxia-finality`).
 
 ## Next
 

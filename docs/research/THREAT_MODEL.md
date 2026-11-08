@@ -59,7 +59,7 @@ affect others. Nonce monotonicity prevents replaying old blocks.
 **Threat**: Validators refuse to vote on certain transactions.
 
 **Mitigation**: ORV does not require specific validators. Any representative
-with sufficient stake can vote. Multiple transports are designed to give a transaction alternative propagation paths; production transports are in progress, and only the simulated transport is implemented in this repository today.
+with sufficient stake can vote. Multiple transports are designed to give a transaction alternative propagation paths; no radio driver is written yet, and only the simulated transport is implemented in this repository today.
 
 ## 8. Key Compromise
 

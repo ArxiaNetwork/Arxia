@@ -110,4 +110,4 @@ The nonce registry, registry merge, conflict reporting and message validation ar
 
 - Crate: `arxia-gossip`
 - Entry point: `sync_nonces_before_l1()`
-- Tests: 4 unit tests covering success, mismatch, merge, and no-neighbors cases
+- Tests: unit tests in `crates/arxia-gossip` (see Test Results above)
