@@ -2,13 +2,12 @@
 
 ## Bill of Materials
 
-| Component                    | Approx. Cost |
-|------------------------------|-------------|
-| TTGO T-Beam v1.1 (ESP32 + SX1276 LoRa + GPS) | $22 |
-| 868/915 MHz antenna (SMA)   | $3          |
-| 18650 Li-Ion battery         | $4          |
-| USB-C cable                  | $2          |
-| **Total**                    | **~$31**    |
+- TTGO T-Beam v1.1 (ESP32 + SX1276 LoRa + GPS)
+- 868/915 MHz antenna (SMA)
+- 18650 Li-Ion battery
+- USB-C cable
+
+The hardware costs tens of dollars: T-Beam class boards are around 30 to 40 USD.
 
 ## Assembly
 
@@ -18,18 +17,11 @@
 
 ## Firmware
 
-```bash
-cd targets/esp32
-cargo build --release --target xtensa-esp32-none-elf
-espflash flash --monitor target/xtensa-esp32-none-elf/release/arxia-esp32
-```
+The firmware built today is the power-loss bench for the flash storage layer, in `targets/esp32-bench`. It is a standalone Cargo project with its own toolchain; build, commissioning and flashing steps are in [`targets/esp32-bench/README.md`](../../targets/esp32-bench/README.md). Arxia node firmware for the T-Beam is not built yet.
 
 ## Solar Operation
 
-For permanent outdoor nodes:
-- 6V / 1W solar panel connected to T-Beam solar input
-- Average power consumption: ~80mA at 3.7V (LoRa idle + periodic TX)
-- Solar panel provides sufficient charge in 4+ hours of sunlight
+No node firmware runs on the board yet, so power consumption has not been measured and this guide gives no solar sizing.
 
 ## Antenna Considerations
 
@@ -40,7 +32,8 @@ For permanent outdoor nodes:
 
 ## LoRa Parameters
 
-Default configuration:
+Proposed starting values for the radio link, not final. No LoRa transport is implemented in this repository yet, so nothing applies these values today. The default path is raw LoRa.
+
 - Bandwidth: 125 kHz
 - Spreading Factor: SF7 (adjustable SF7-SF12)
 - Coding Rate: 4/5
