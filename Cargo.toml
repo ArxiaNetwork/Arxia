@@ -39,9 +39,9 @@ edition = "2021"
 authors = []
 rust-version = "1.89.0"
 license = "Apache-2.0 OR MIT"
-repository = "https://github.com/arxialayer1/arxia"
-homepage = "https://arxia.one"
-description = "Layer 1 blockchain for offline-first mesh consensus"
+repository = "https://github.com/ArxiaNetwork/Arxia"
+homepage = "https://arxia.network"
+description = "Offline settlement layer. Value that moves without internet, over long range radio."
 
 # LOW-015: every dependency is `major.minor` pinned.
 # Rationale: a bare `"1"` allows cargo to pick any 1.x.y, which

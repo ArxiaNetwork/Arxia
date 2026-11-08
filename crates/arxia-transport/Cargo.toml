@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Transport layer abstraction for Arxia (LoRa, BLE, SMS, satellite)"
+description = "Transport layer abstraction for Arxia: trait, signed messages, fragment reassembly and a simulated link (radio drivers not yet implemented)"
 authors = []
 
 [dependencies]
