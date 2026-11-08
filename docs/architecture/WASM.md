@@ -1,7 +1,6 @@
 # Arxia WASM Runtime
 
-> **Status:** Specified. Implementation target M12-M18. The ABI and execution
-> model described here are final. The Wasmer integration is not yet coded.
+> **Status:** Parked design note, not implemented. There is no contract runtime in this repository; the `arxia-wasm` crate is a placeholder. The ABI and execution model below are a draft and may change.
 
 ---
 
@@ -18,18 +17,16 @@
 9. [Offline Execution](#offline-execution)
 10. [Security Model](#security-model)
 11. [Example Contract](#example-contract)
-12. [Roadmap](#roadmap)
+12. [Open items](#open-items)
 
 ---
 
 ## Overview
 
-Arxia supports WebAssembly (WASM) smart contracts executed in a sandboxed,
-metered runtime powered by [Wasmer](https://wasmer.io/). Contracts are compiled
-to `.wasm` bytecode and deployed via a `DEPLOY` block on the Arxia Block Lattice.
+This note describes a possible WebAssembly (WASM) contract runtime: a sandboxed, metered runtime built on [Wasmer](https://wasmer.io/). Contracts would be compiled to `.wasm` bytecode and deployed via a `DEPLOY` block on the Arxia block lattice. None of this exists in code today; the lattice has no `DEPLOY` block type.
 
 The runtime is designed for offline-first execution: contracts that fit within
-the L0/L1 instruction budget can be evaluated locally on a T-Beam node or a
+the Local and Mesh instruction budget can be evaluated locally on a T-Beam node or a
 smartphone without any network connectivity.
 
 ---
@@ -84,15 +81,15 @@ Contract execution limits depend on the finality tier of the transaction:
 
 | Finality Tier | Instruction Limit | Max Contract Size | Typical Use Case         |
 |---------------|-------------------|-------------------|--------------------------|
-| L0 (offline)  | 100,000           | 64 KB             | Simple token transfers   |
-| L1 (mesh)     | 100,000           | 64 KB             | Escrow, multi-sig        |
-| L2 (global)   | 10,000,000        | 1 MB              | Complex DeFi, governance |
+| Local          | 100,000    | 64 KB | Simple transfers       |
+| Mesh           | 100,000    | 64 KB | Escrow, multi-signature |
+| Full consensus | 10,000,000 | 1 MB  | Larger programs        |
 
-L0 and L1 share the same limit because both execute without guaranteed access
-to full network state. L2 execution has access to the complete global ledger
+Local and Mesh share the same limit because both execute without guaranteed access
+to full network state. Full consensus execution has access to the complete global ledger
 and can run significantly more complex logic.
 
-Contracts that exceed the L0/L1 limit are rejected at submission time if they
+Contracts that exceed the Local and Mesh limit are rejected at submission time if they
 target offline finality. A contract cannot dynamically escalate its finality tier.
 
 ---
@@ -108,10 +105,10 @@ external calls a contract can make. No other system calls are available.
 fn arxia_get_balance(pubkey_ptr: *const u8) -> u64
 ```
 
-Returns the current ARX balance (in nanoARX) of the account identified by the
+Returns the current ARX balance (in micro-ARX) of the account identified by the
 32-byte Ed25519 public key at `pubkey_ptr`.
 
-In offline execution (L0/L1), returns the last known local balance. May not
+In offline execution (Local and Mesh), returns the last known local balance. May not
 reflect the global state if the device is partitioned.
 
 ---
@@ -119,11 +116,11 @@ reflect the global state if the device is partitioned.
 ### `arxia_send`
 
 ```rust
-fn arxia_send(to_ptr: *const u8, amount_nanoarx: u64) -> bool
+fn arxia_send(to_ptr: *const u8, amount_micro_arx: u64) -> bool
 ```
 
 Creates a `SEND` block from the contract's account to the account at `to_ptr`,
-for `amount_nanoarx` nanoARX. Returns `true` on success, `false` if the balance
+for `amount_micro_arx` micro-ARX. Returns `true` on success, `false` if the balance
 is insufficient.
 
 The resulting SEND block is queued and broadcast after the contract call completes.
@@ -180,7 +177,7 @@ Contracts are deployed via a signed `DEPLOY` block on the Arxia Block Lattice:
 DEPLOY block {
     account:    deployer_pubkey,
     prev_hash:  previous_block_hash,
-    bytecode:   wasm_bytes,       // must be valid WASM, ≤ 64KB for L0/L1
+    bytecode:   wasm_bytes,       // must be valid WASM, ≤ 64KB for Local and Mesh
     init_args:  calldata_bytes,   // passed to contract constructor
     nonce:      sequential_nonce,
     signature:  ed25519_sig,
@@ -218,6 +215,8 @@ contract author — the runtime does not provide built-in upgradeability.
 
 ## Fee Model
 
+Draft only, not implemented:
+
 | Action              | Fee Formula                                              |
 |---------------------|----------------------------------------------------------|
 | Deploy              | `ceil(bytes/100) × BASE_FEE × 10`                       |
@@ -225,14 +224,13 @@ contract author — the runtime does not provide built-in upgradeability.
 | Call (revert)       | Same as success — fees are not refunded on revert        |
 | Out-of-gas          | Full instruction budget consumed                         |
 
-`BASE_FEE_ARX = 0.001 ARX`. The gas rate (`RATE`) is set by governance and
-targets a fixed USD-equivalent cost per 1M instructions.
+Fee values are not set; no fee is implemented in the protocol today.
 
 ---
 
 ## Offline Execution
 
-WASM contracts can execute in L0/L1 offline mode with the following constraints:
+WASM contracts can execute in Local and Mesh offline mode with the following constraints:
 
 **Available in offline execution:**
 - `arxia_get_balance` (local state only)
@@ -245,10 +243,10 @@ WASM contracts can execute in L0/L1 offline mode with the following constraints:
   relevant DID document has not been synced, verification returns `false`.
 
 **State consistency warning:**
-Contracts that read balance or block state during L0/L1 execution operate on
+Contracts that read balance or block state during Local and Mesh execution operate on
 local state that may diverge from global state. Contracts designed for offline
 use should implement conservative logic (assume less state, not more) and
-treat L0/L1 results as probabilistic rather than final.
+treat Local and Mesh results as probabilistic rather than final.
 
 ---
 
@@ -269,13 +267,13 @@ specification. A contract cannot call another contract. This eliminates the
 reentrancy attack vector that has caused significant losses on EVM chains
 (DAO hack, various DeFi exploits).
 
-Cross-contract interaction is planned for L2 execution in a future AIP.
+Cross-contract interaction is planned for full consensus execution in a future AIP.
 
 ### Integer arithmetic
 
 Contracts must use saturating or checked arithmetic. The runtime does not trap
-on integer overflow — it wraps. Contract authors are responsible for overflow
-safety. The Arxia Rust SDK (planned M12-M18) will provide safe arithmetic
+on integer overflow: it wraps. Contract authors are responsible for overflow
+safety. The Arxia Rust SDK (not scheduled) will provide safe arithmetic
 primitives.
 
 ### No floating point
@@ -318,29 +316,17 @@ pub extern "C" fn release() -> bool {
 }
 ```
 
-This contract compiles to approximately 2-4 KB of WASM bytecode — well within
-the 64 KB L0/L1 limit.
+This contract compiles to approximately 2-4 KB of WASM bytecode, well within
+the 64 KB Local and Mesh limit.
 
 ---
 
-## Roadmap
+## Open items
 
-| Milestone | Deliverable                                                  |
-|-----------|--------------------------------------------------------------|
-| M12-M18   | Wasmer sandbox integration                                   |
-| M12-M18   | Host ABI implementation (all 5 functions)                    |
-| M12-M18   | Instruction metering (100k L0/L1, 10M L2)                   |
-| M12-M18   | Contract deployment via DEPLOY block                         |
-| M12-M18   | Arxia Rust SDK (safe arithmetic, ABI bindings)               |
-| M18-M24   | Cross-contract calls (L2 only)                               |
-| M18-M24   | Contract upgradeability patterns (proxy standard)            |
-| M24+      | Formal verification tooling for critical contracts           |
+Not scheduled: Wasmer sandbox integration; host ABI (five functions); instruction metering; contract deployment block; a Rust SDK with safe arithmetic; cross-contract calls (full consensus only); an upgradeability pattern; formal verification tooling.
 
-The WASM runtime is not on the critical path for the seed round or testnet
-launch. L0/L1 transactions (the core offline-first value proposition) do not
-require smart contract execution. The runtime is an extension of the protocol,
-not a prerequisite for it.
+The WASM runtime is not on the critical path. Local and Mesh payments, the core of the offline settlement network, do not require contract execution. A runtime would be an extension of the protocol, not a prerequisite for it.
 
 ---
 
-*Last updated: 2026-03-19 — v29*
+*Parked design note.*

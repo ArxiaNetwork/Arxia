@@ -1,12 +1,15 @@
 # Flash endurance model — T-Beam ledger storage
 
-> **Status: theoretical model, written before the hardware bench.**
-> Nothing in this document is implemented. `arxia-storage-flash` does
-> not exist yet; the ESP32 target has no persistence. This model exists
-> so that when the M3-6 bench runs, every observed number lands against
-> a written prediction — if the field diverges from the model, we want
-> to know immediately whether it is the model or the material that is
-> wrong, not discover we never wrote the prediction down.
+> **Status: theoretical wear model, written before the hardware bench.**
+> The flash backend it models now exists: `arxia-storage-flash`, with its
+> power-cut sweeps in `crates/arxia-storage-flash/tests/power_cut.rs`
+> (sections 7 and 8 describe it). The wear predictions below are not yet
+> measured on hardware, and the backend is not yet wired into a running
+> node. This model exists so that when the T-Beam bench runs, every
+> observed number lands against a written prediction. If the field
+> diverges from the model, we want to know immediately whether it is the
+> model or the material that is wrong, not discover we never wrote the
+> prediction down.
 
 Every number below is tagged:
 
@@ -64,11 +67,11 @@ make the numbers better).
 Two regions, because the two halves of ledger state have opposite
 write behaviour:
 
-- **Chain region** — blocks. Append-only: a block, once accepted, is
-  never modified (only L2-finality pruning, planned, ever removes
+- **Chain region**: blocks. Append-only: a block, once accepted, is
+  never modified (only pruning of blocks at full consensus, planned, ever removes
   data). Modelled
   as a sequential log.
-- **Hot region** — mutable state: `send_index` entries and
+- **Hot region**: mutable state: `send_index` entries and
   tombstones, the supply accumulator, mount metadata. Small, rewritten
   constantly. Modelled as a key-value map over a few sectors.
 
@@ -98,7 +101,7 @@ region *by construction*, no wear-levelling table needed. So per-sector
 cycles = region wraps.
 
 For a log-structured region reclaimed by migrating live data (the map,
-or the chain region once L2-finality pruning compacts it), the classic
+or the chain region once full-consensus pruning compacts it), the classic
 write-amplification result applies:
 
 ```

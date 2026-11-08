@@ -2,8 +2,7 @@
 
 ## Overview
 
-Arxia operates over multiple physical transports. The transport layer
-abstracts the underlying medium behind a common trait.
+Arxia is designed to run over several physical transports, with long range LoRa radio first. The transport layer abstracts the underlying medium behind a common trait. Today the code provides that trait, signed transport messages, receive-side reassembly of signed fragments, and a simulated transport for tests and examples. No LoRa, Bluetooth, SMS or satellite driver exists in this repository yet.
 
 ## TransportTrait
 
@@ -26,29 +25,29 @@ for the canonical definitions.
 implementations (e.g.
 [`SimulatedTransport::latency_ms()`](../../crates/arxia-transport/src/sim/simulated.rs)).
 
-## Supported Transports
+## Target transports
 
-### LoRa / Meshtastic (Primary)
+### LoRa (primary)
+
+Arxia is designed for raw LoRa, not LoRaWAN. Every transaction fits in one 193-byte radio packet, so two nodes in radio reach can exchange it directly with nothing in between. LoRaWAN can serve only as an optional short range on-ramp: under regional payload limits a 193-byte block fits only at SF7 and SF8 in Europe and at SF7 in North America, and LoRaWAN has no standard uplink fragmentation. No Meshtastic code is in this repository; Arxia is not affiliated with the Meshtastic project.
 
 - **Frequency**: EU 868 MHz (1% duty cycle), US 915 MHz
 - **Spreading factors**: SF7 (short range, fast) to SF12 (long range, slow)
 - **MTU**: 256 bytes (Arxia compact block = 193 bytes fits)
-- **Range**: 1-15 km line-of-sight, depends on SF and terrain
-- **Hardware**: SX1276/SX1278 modules, ~$5-15
+- **Range**: long range; depends on spreading factor, antenna and terrain. Not measured for Arxia yet.
+- **Hardware**: SX1276/SX1278 radios; the reference node is a T-Beam class board (ESP32 with LoRa) costing tens of dollars
 
-### BLE (L0 Proximity)
+### BLE (short range)
 
-- **Range**: ~10-30 meters
+- **Range**: short range
 - **Use case**: Point-of-sale, face-to-face transactions
-- **Finality**: L0 only (no gossip verification possible)
+- **Finality**: assessed the same way as on any transport (see FINALITY.md); the transport does not set the tier
 - **MTU**: 512 bytes (simulated)
-- **Latency**: ~50ms
 
-### SMS (Fallback)
+### SMS (fallback)
 
-- **Encoding**: Base64 compact block split across 2-3 SMS messages
+- **Encoding**: Base64 compact block split across several SMS messages
 - **Use case**: Areas with cellular but no internet
-- **Latency**: 1-5 seconds per message
 
 ### Satellite DVB-S2 (Reception-only)
 
@@ -70,7 +69,7 @@ uses:
 ### Bounded queues (CRIT-012)
 
 Both queues are bounded to defend against denial-of-service via
-unbounded growth (audit finding **CRIT-012**, closed by PR #44).
+unbounded growth (internal security review finding **CRIT-012**, see `../SECURITY_REVIEW.md`; closed by PR #44).
 Defaults are `DEFAULT_INBOX_CAPACITY = 1024` and
 `DEFAULT_OUTBOX_CAPACITY = 1024` (≈ 256 KB per direction at LoRa
 MTU). For custom limits use
