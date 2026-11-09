@@ -251,7 +251,7 @@ held no pending batch journal and no torn item.
 
 Upstream's stated MSRV policy is "latest stable Rust" : a Rust
 version bump is not considered breaking and can arrive in any
-release, including a patch. This workspace pins MSRV 1.89.0 in
+release, including a patch. This workspace pins MSRV 1.90.0 in
 lock-step across the toolchain file, manifests and CI ; any
 sequential-storage release may silently require a newer
 compiler and fail the whole workspace build.
@@ -276,7 +276,7 @@ workspace MSRV itself is enforced by the LOW-014 pin test in
 
 ### Regression detection
 
-At every bump review, `cargo +1.89.0 build -p
+At every bump review, `cargo +1.90.0 build -p
 arxia-storage-flash` (or the then-current pinned toolchain) is
 part of the gate before the pin moves.
 

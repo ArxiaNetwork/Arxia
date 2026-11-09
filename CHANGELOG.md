@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- MSRV raised from `1.89.0` to `1.90.0`, required by `redb` 4.2.0 and later. The toolchain file, the manifests, `clippy.toml`, the CI workflows and the LOW-014 pin test move together.
 - Bump `criterion` from `0.5.1` to `0.7.0` via workspace dependency ([#24](https://github.com/ArxiaNetwork/Arxia/pull/24)). Held at `0.7` because `0.8.x` requires Rust `1.86` while the workspace MSRV is pinned to `1.85.0`.
 - `arxia-bench` now consumes `criterion` through `[workspace.dependencies]` instead of an inline version.
 
