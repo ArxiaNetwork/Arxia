@@ -65,19 +65,19 @@ version = "<0.8.0"
 name = "zerocopy"
 version = ">=0.9.0"
 
-# redb : accepted-risk envelope is exactly the 4.1.x line. Two
-# upstream crash windows around file growth exist in 4.1.0 and
-# are fixed in the unreleased 4.2.0 ; see docs/dependency-risks.md
-# "redb crash windows during file growth" for the rationale and
-# the exit plan. A 4.2 release must come through deliberate
-# review, not a silent bump.
+# redb : accepted-risk envelope is exactly the reviewed 4.4.x line.
+# The two crash windows around file growth that 4.1.0 carried were
+# fixed upstream in 4.2.0, and the move to 4.4.0 was reviewed ; see
+# docs/dependency-risks.md "redb crash windows during file growth".
+# Another minor line must come through the same review, not a
+# silent bump.
 [[bans.deny]]
 name = "redb"
-version = "<4.1.0"
+version = "<4.4.0"
 
 [[bans.deny]]
 name = "redb"
-version = ">=4.2.0"
+version = ">=4.5.0"
 
 # sequential-storage : accepted-risk envelope is exactly the probed
 # 8.0.x line. The in-flash format is declared unstable upstream, the

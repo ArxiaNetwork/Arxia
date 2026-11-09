@@ -116,75 +116,75 @@ here AND a version pin in `deny.toml`.
 CI does not currently run this restricted-PATH probe — adding
 it as a CI step is tracked as a follow-up scope.
 
-## redb crash windows during file growth (4.1.0)
+## redb crash windows during file growth (4.1.0, fixed in 4.2.0)
 
 ### Affected version
 
-`redb = 4.1.0` (the version this workspace pins).
+`redb = 4.1.0`, pinned until November 2026. The windows were fixed
+in 4.2.0; the workspace now pins 4.4.0.
 
 ### Behaviour
 
-The upstream changelog for the **unreleased** 4.2.0 documents two
-crash-window fixes that therefore exist in 4.1.0 :
+redb 4.1.0 had two crash windows around file growth :
 
-1. A crash during a transaction that grows the database file can
+1. A crash during a transaction that grows the database file could
    leave the database permanently unopenable afterward.
-2. A crash during a commit that resizes the database file can
+2. A crash during a commit that resizes the database file could
    leave the database permanently unopenable, reporting
    corruption on subsequent opens, even though every committed
    transaction was intact and fully recoverable.
 
-Both are crash-timing windows around file growth : a process
-death at the wrong instant does not lose a committed batch (the
-atomicity and recovery contract holds) but can lose the ability
-to *open* the file at all, which for a node is loss of the local
-ledger replica.
+Both need a storage-level failure. In redb's own words, the first
+is a header that reached the disk while the file extension did
+not, and the second is a torn write of the region counts. A power
+cut can cause either; a process kill cannot, because the operating
+system keeps every write the process completed. No committed batch
+was lost, but the ability to *open* the file could be, which for a
+node is loss of the local ledger replica. 4.2.0 fixed both, and
+also a crash during recovery from an earlier crash that could roll
+back or corrupt committed transactions.
 
 ### Workaround
 
-`arxia-storage-redb`'s kill-nine test pre-grows the database
-file in committed transactions *before* its kill window opens,
-so the growth path is mostly kept out of the crash-timing test
-(hammering a known-unfixed upstream window would only produce
-unactionable flakes). Nothing else avoids the window at runtime ;
-a node that dies mid-growth is exposed to it.
+None needed on 4.4.0. While 4.1.0 was pinned, the kill-nine test
+pre-grew the file before its kill window; that mitigation is gone.
 
 ### Why we accept
 
-Every redb release line still receiving fixes requires Rust
-1.89 ; the alternative within the old MSRV was the 2.6.x line,
-end-of-life since August 2025, which receives no fixes at all
-and whose exposure to these same windows is unknown. A
-maintained engine with two documented, soon-fixed windows was
-judged a smaller risk than an unmaintained one with an unknown
-set. RustSec lists no advisory for redb (checked 2026-08-02).
+redb is a maintained engine and the windows above are fixed
+upstream. The cost is the toolchain: every release from 4.2.0 on
+declares rust-version 1.90, so the workspace MSRV moved to 1.90.0
+in lock-step with this bump. RustSec lists no advisory for redb
+(checked November 2026).
 
 ### Mechanical anchor
 
 Two anchors. `deny.toml` pins the accepted envelope to exactly
-the reviewed 4.1.x line as the conventional record. The enforced
+the reviewed 4.4.x line as the conventional record. The enforced
 one is `crates/arxia-storage-redb/tests/version_pin.rs`, which
 reads the resolved version out of `Cargo.lock` and fails the
-suite if redb drifts off 4.1.x — nothing in CI runs cargo-deny
+suite if redb drifts off 4.4.x; nothing in CI runs cargo-deny
 today, so the test is what actually stops a silent bump.
 
 ### Regression detection
 
-When redb 4.2.0 ships, it is validated, not adopted : point the
-kill-nine harness at the exact paths the release claims to fix
-(remove the pre-growth mitigation, add an aggressive-growth
-round with large values), and only on green update the
-version-pin test, this entry, and deny.toml together. The
-kill-nine test itself is the regression net for the recovery
-contract on every future bump.
+The move from 4.1.0 to 4.4.0 (November 2026) rests on the
+upstream fix, because no test here can reach these windows: the
+kill-nine harness kills a process, and a power-cut test for the
+host backend does not exist yet. What was checked: the kill-nine
+suite passes on 4.4.0 without the pre-growth mitigation, together
+with a new test that writes eight 64 KiB values per batch while
+the file grows several times; both pass on 4.1.0 as well, as
+expected. A database written by 4.1.0 through
+`arxia-storage-redb` opened under 4.4.0 with every key read back,
+then took more writes and a reopen; 4.1.0 could still open the
+result.
 
-Update, November 2026: redb 4.2.0 has shipped, and every release
-from 4.2.0 on (4.5.0 at the time of writing) declares
-rust-version 1.90. Adopting the fixes therefore needs the
-workspace MSRV to move to 1.90 first, in lock-step, then the
-validation above. Until then the pin stays on 4.1.x, and a
-Dependabot pull request for a later redb fails the build on the
-pinned toolchain.
+Any later bump goes through the same review: the full kill-nine
+suite, a database written by the pinned version opened by the
+candidate, the upstream changelog, then the version-pin test, this
+entry and deny.toml together. redb 4.5.0, which reworks file
+locking for multi-process access, is the next candidate.
 
 ## sequential-storage unstable in-flash format
 

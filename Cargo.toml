@@ -66,7 +66,7 @@ tracing-subscriber = "0.3"
 criterion = { version = "0.7", features = ["html_reports"] }
 rand = "0.10.2"
 thiserror = "2.0"
-redb = "4.1"
+redb = "4.4"
 sequential-storage = { version = "8.0.1", default-features = false }
 tempfile = "3"
 bs58 = "0.5"
