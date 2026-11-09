@@ -182,8 +182,9 @@ contract on every future bump.
 
 ### Affected version
 
-`sequential-storage = 8.0.1` (the version this workspace pins),
-used by `arxia-storage-flash` as the on-flash key-value log.
+`sequential-storage = 8.0.2` (the version this workspace pins;
+adopted at 8.0.1), used by `arxia-storage-flash` as the on-flash
+key-value log.
 
 ### Behaviour
 
@@ -223,11 +224,20 @@ the pinned version under the candidate version and read every
 key back, before anything else. A format break at that step
 means the bump needs a migration plan, not a lockfile change.
 
+Bump to 8.0.2 (November 2026): a store written by 8.0.1 under a
+mixed workload (puts, overwrites, deletes, atomic batches, enough
+volume to wrap every page) was mounted under 8.0.2, every key
+read back, then written to and remounted. 8.0.1 then mounted the
+store 8.0.2 had modified and read every key back. Applying the
+same operations, both versions leave byte-identical images. The
+check used the in-memory mock with 1-byte words, and the images
+held no pending batch journal and no torn item.
+
 ## sequential-storage "latest stable" MSRV policy
 
 ### Affected version
 
-`sequential-storage = 8.0.1` ; the risk is any future release.
+`sequential-storage = 8.0.2` ; the risk is any future release.
 
 ### Behaviour
 
@@ -266,15 +276,16 @@ part of the gate before the pin moves.
 
 ### Affected version
 
-`sequential-storage = 8.0.1`.
+`sequential-storage = 8.0.2` (probed at 8.0.1, re-probed at
+8.0.2).
 
 ### Behaviour
 
-The crate's API is async, but in 8.0.1 its futures never pend of
-their own accord : no `Poll::Pending`, `Waker` or `poll_fn`
-appears anywhere in its source, and its futures await only the
-flash driver. Over a synchronous driver — which is what an ESP32
-SPI flash is — every future completes on the first poll,
+The crate's API is async, but in 8.0.1 and 8.0.2 its futures
+never pend of their own accord : no `Poll::Pending`, `Waker` or
+`poll_fn` appears anywhere in its source, and its futures await
+only the flash driver. Over a synchronous driver, which is what
+an ESP32 SPI flash is, every future completes on the first poll,
 measured by probe at adoption. `arxia-storage-flash` bridges to
 the synchronous `StorageBackend` trait on exactly this property :
 it polls once and never loops. Nothing upstream promises any of
@@ -311,12 +322,15 @@ At every bump review, the single-poll probe is re-run against
 the candidate version : grep its source for `Poll::Pending`,
 `Waker` and `poll_fn`, and run every operation of the probe
 suite counting polls. One poll each, or the bump does not land.
+Re-run for 8.0.2: no `Poll::Pending`, `Waker` or `poll_fn` in its
+source, and one poll per operation.
 
 ## sequential-storage iteration order is not a contract
 
 ### Affected version
 
-`sequential-storage = 8.0.1`.
+`sequential-storage = 8.0.2` (probed at 8.0.1, re-probed at
+8.0.2).
 
 ### Behaviour
 
@@ -361,6 +375,8 @@ candidate version (insertion order vs iteration order, overwrite
 yielding, removed-key behaviour), and the full
 `arxia-storage-flash` suite — conformance, window mechanics and
 power-cut sweeps — must be green before the pin moves.
+Re-run for 8.0.2: the same write-order iteration, the same
+yielding of overwritten keys and the same absence of removed keys.
 
 ## Adding a new entry to this document
 
