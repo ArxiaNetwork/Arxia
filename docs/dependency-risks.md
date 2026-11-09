@@ -178,6 +178,14 @@ version-pin test, this entry, and deny.toml together. The
 kill-nine test itself is the regression net for the recovery
 contract on every future bump.
 
+Update, November 2026: redb 4.2.0 has shipped, and every release
+from 4.2.0 on (4.5.0 at the time of writing) declares
+rust-version 1.90. Adopting the fixes therefore needs the
+workspace MSRV to move to 1.90 first, in lock-step, then the
+validation above. Until then the pin stays on 4.1.x, and a
+Dependabot pull request for a later redb fails the build on the
+pinned toolchain.
+
 ## sequential-storage unstable in-flash format
 
 ### Affected version
