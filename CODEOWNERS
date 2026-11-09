@@ -1,5 +1,2 @@
-# Default owners for everything
-* @arxia-protocol/core
-
-# Cryptographic code requires additional review
-crates/arxia-crypto/ @arxia-protocol/core @arxia-protocol/security
+# Default owner for everything
+* @ArxiaNetwork

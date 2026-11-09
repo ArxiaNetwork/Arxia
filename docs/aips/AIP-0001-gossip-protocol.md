@@ -4,12 +4,14 @@
 |-------------|--------------------------------|
 | **AIP**     | 0001                           |
 | **Title**   | Gossip Protocol Specification  |
-| **Status**  | Implemented (v0.5.0)           |
+| **Status**  | Implemented as a library (`arxia-gossip`) |
 | **Created** | 2025-01-15                     |
+
+This AIP records the original proposal. The message set, merge behaviour and test coverage have since changed; docs/architecture/GOSSIP.md is the current specification.
 
 ## Motivation
 
-Nodes in the Arxia mesh network need a protocol to propagate blocks and
+Arxia nodes, linked over long range radio and other low bandwidth links, need a protocol to propagate blocks and
 detect double-spend attempts. Given intermittent connectivity, the protocol
 must be efficient (minimal bandwidth), convergent (CRDT-based), and
 resilient to partitions.
@@ -77,8 +79,9 @@ for each ((account, nonce), remote_hash) in response:
 ```
 
 Merge never silently overwrites. Conflicts are returned as a
-`Vec<NonceConflict>` for the caller to resolve (typically via
-ORV stake-weighted vote; see `arxia-consensus::conflict`).
+`Vec<NonceConflict>` for the caller to resolve (the stake-weighted
+resolver in `arxia-consensus::conflict` exists as a library and is not
+yet called).
 
 ### SyncResult
 
@@ -90,7 +93,7 @@ enum SyncResult {
 }
 ```
 
-L1 finality requires `SyncResult::Success`.
+Mesh finality (code `FinalityLevel::L1`) requires `SyncResult::Success`.
 
 ## Rationale
 
@@ -101,16 +104,10 @@ L1 finality requires `SyncResult::Success`.
 
 ## Test Results
 
-Tested across 10 scenarios and 3 network topologies:
-
-1. **Linear topology** (A-B-C): 2-hop propagation
-2. **Star topology** (A-B, A-C, A-D): Hub propagation
-3. **Mesh topology** (fully connected): Direct propagation
-
-All scenarios achieved convergence within expected hop counts.
+The nonce registry, registry merge, conflict reporting and message validation are covered by unit tests in `crates/arxia-gossip` (`node.rs`, `nonce_registry.rs`, `message.rs`, `signed_message.rs`). A multi-node convergence suite over linear, star and fully connected topologies does not exist in this repository yet.
 
 ## Implementation
 
 - Crate: `arxia-gossip`
 - Entry point: `sync_nonces_before_l1()`
-- Tests: 4 unit tests covering success, mismatch, merge, and no-neighbors cases
+- Tests: unit tests in `crates/arxia-gossip` (see Test Results above)

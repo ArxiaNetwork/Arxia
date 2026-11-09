@@ -10,10 +10,10 @@ weighted by delegated stake.
 
 ```rust
 pub struct VoteORV {
-    pub voter_pubkey: [u8; 32],
     pub block_hash: [u8; 32],
+    pub voter_pubkey: [u8; 32],
     pub delegated_stake: u64,
-    pub round: u32,
+    pub nonce: u64,
     pub signature: [u8; 64],
 }
 ```
@@ -22,23 +22,24 @@ pub struct VoteORV {
 
 The vote hash is computed over an 80-byte input:
 - bytes 0..32: block_hash
-- bytes 32..40: delegated_stake (little-endian)
-- bytes 40..44: round (little-endian)
-- bytes 44..76: voter_pubkey
-- bytes 76..80: padding (zeros)
+- bytes 32..64: voter_pubkey
+- bytes 64..72: delegated_stake (little-endian)
+- bytes 72..80: nonce (little-endian; monotonic, prevents vote replay)
 
-This is then Blake3-hashed and Ed25519-signed.
+This is then Blake3-hashed and Ed25519-signed. See `compute_vote_hash` in `crates/arxia-consensus/src/vote.rs`.
 
 ## 3-Tier Conflict Resolution Cascade
 
 When two blocks conflict (same account, same nonce):
 
-1. **Stake-weighted**: Sum delegated stake for each candidate. If the gap
-   exceeds 5% of total stake, the higher-stake candidate wins.
+1. **Stake-weighted**: Sum the delegated stake of the votes for each candidate. If the gap
+   exceeds 5% of the two candidates' combined stake, the higher-stake candidate wins.
 2. **Vector clock**: (Reserved for future implementation.) Compare causal
    ordering via vector clocks.
 3. **Hash tiebreaker**: Lexicographically smaller block hash wins.
    Deterministic and requires no additional communication.
+
+The stake-weighted resolver `arxia-consensus::conflict::resolve_conflict_orv` is implemented as a library, but nothing calls it yet. When partitions rejoin, reconciliation keeps exactly one block per account sequence number, chosen the same way on every node; today that choice is made by block hash.
 
 ## Quorum Requirements
 
@@ -48,10 +49,10 @@ When two blocks conflict (same account, same nonce):
 
 ## Minimum Delegation
 
-A vote is only counted if delegated_stake >= 0.1% of total stake in that
-round. This prevents Sybil attacks via many low-stake voters.
+A vote is only counted if the representative's delegated stake is at least 0.1% of total supply (`total_supply / 1000`, integer division; see `crates/arxia-consensus/src/orv.rs`). This prevents Sybil attacks via many low-stake voters.
 
 ## Delegation
 
-Stake holders delegate to representatives. A representative's voting power
-equals the sum of all delegations to them plus their own stake.
+In the design, a representative's voting power is the sum of the stake
+delegated to it plus its own. Today the stake is passed into the vote
+directly; delegation is not yet reconstructed from the ledger.

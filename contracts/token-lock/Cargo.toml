@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Token locking contract for Arxia (vesting, staking)"
+description = "Example deadline lock and cliff-plus-linear release schedule for Arxia, in plain Rust (no runtime executes it)"
 authors = []
 
 [dependencies]

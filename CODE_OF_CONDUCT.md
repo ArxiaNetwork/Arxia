@@ -12,7 +12,7 @@ everyone. All participants are expected to:
 
 ## Enforcement
 
-Instances of unacceptable behavior may be reported to the project maintainers.
+Instances of unacceptable behavior may be reported to arxia.network@proton.me.
 All complaints will be reviewed and investigated.
 
 ## Scope

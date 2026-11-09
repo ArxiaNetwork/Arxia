@@ -5,10 +5,12 @@ the predicates that promote a block from one tier to the next, the
 conflict-resolution cascade, and the invariants that CRDT reconciliation
 must preserve across partition healing.
 
-> Status: **Normative** for protocol `v0.1.x`. The tier set, ordering,
-> and thresholds documented here are stable. Extensions (transport-aware
+> Status: **Normative** for protocol `v0.1.x`. The tier set implemented in code, its ordering
+> and its thresholds are stable. Extensions (transport-aware
 > weighting, active delegation, full three-tier ORV cascade) are called
 > out explicitly in §9 as non-normative future work.
+
+> **Tier names.** Public material names the finality tiers Local, Mesh, Batch and Anchored. This specification describes the code, whose identifiers (`FinalityLevel::L0`, `L1`, `L2`) predate those names; renaming them is a separate engineering change. Here `L0`, `L1` and `L2` always mean those code identifiers, never a network layer: `L0` is Local, `L1` is Mesh, and `L2` is full consensus among registered validators, inside the radio network. Batch and Anchored belong to the settlement layer. The settlement layer is a direction we have committed to, not code that exists today. We will show it when it runs.
 
 ---
 
@@ -42,12 +44,12 @@ information never demotes.
 Reference:
 [`arxia-finality::FinalityLevel`](../../crates/arxia-finality/src/lib.rs).
 
-| Tier      | Discriminant | Display form    | Meaning |
-|-----------|:------------:|-----------------|---------|
-| `Pending` | `0`          | `PENDING`       | Awaiting further confirmation. |
-| `L0`      | `1`          | `L0 (instant)`  | Small-value, locally confirmed, offline-safe. |
-| `L1`      | `2`          | `L1 (gossip)`   | Gossip layer reports no `(account, nonce)` conflict with any reachable peer. |
-| `L2`      | `3`          | `L2 (full)`     | `>= 2/3` of the staked total supply has voted for this block. |
+| Tier      | Public name | Discriminant | Display form    | Meaning |
+|-----------|-------------|:------------:|-----------------|---------|
+| `Pending` | none (not yet confirmed) | `0` | `PENDING` | Awaiting further confirmation. |
+| `L0`      | Local       | `1`          | `L0 (instant)`  | Small-value, locally confirmed, offline-safe. |
+| `L1`      | Mesh        | `2`          | `L1 (gossip)`   | Gossip layer reports no `(account, nonce)` conflict with any reachable peer. |
+| `L2`      | full consensus | `3`       | `L2 (full)`     | Registered validators holding at least 67% of registered stake have signed votes for this block. |
 
 The enum derives `Ord` so that strict comparison holds:
 
@@ -121,22 +123,23 @@ The pre-fix `assess_finality` took `validator_pct: f64` and
 `local_confirmations: u32` directly from the caller. Any caller could
 spoof L2 (`validator_pct = 1.0`) or L0/L1 (`local_confirmations =
 u32::MAX`) without supplying a single signed witness. The whole
-finality model trusted the caller's numbers (audit findings
-**CRIT-007** + **CRIT-008**, closed by PR #47).
+finality model trusted the caller's numbers (internal security review
+findings **CRIT-007** + **CRIT-008**, closed by PR #47; see
+[SECURITY_REVIEW.md](../SECURITY_REVIEW.md)).
 
 The current API replaces those scalars with authenticated inputs:
 
-- `confirmations: &[SignedConfirmation]` — Ed25519-signed by a
+- `confirmations: &[SignedConfirmation]`: Ed25519-signed by a
   registered node, bound to `block_hash` under domain prefix
   `arxia-finality-confirmation-v1`.
-- `votes: &[SignedValidatorVote]` — Ed25519-signed by a registered
+- `votes: &[SignedValidatorVote]`: Ed25519-signed by a registered
   validator, bound to `block_hash` under domain prefix
   `arxia-finality-validator-vote-v1` (distinct from the confirmation
-  domain — no cross-protocol replay).
-- `registry: &ValidatorRegistry` — pubkey → stake-micro-ARX map; the
+  domain, so no cross-protocol replay).
+- `registry: &ValidatorRegistry`: pubkey → stake-micro-ARX map; the
   trusted set against which votes/confirmations are filtered and
-  stakes tallied. The registry is caller-populated today; on-chain
-  sync from the consensus layer is tracked in §9.
+  stakes tallied. The registry is caller-populated today; syncing
+  it from the consensus layer is tracked in §9.
 
 `assess_finality` now returns `Result<FinalityLevel, FinalityError>`:
 
@@ -171,7 +174,7 @@ transaction).
 | `confirmations`       | `&[SignedConfirmation]`     | Signed L0 confirmations from registered nodes. Each carries an Ed25519 signature over `domain || confirmer_pubkey || block_hash`. |
 | `sync_result`         | `&SyncResult`               | Output of [`sync_nonces_before_l1`](../../crates/arxia-gossip/src/nonce_registry.rs). |
 | `votes`               | `&[SignedValidatorVote]`    | Signed L2 votes from registered validators. Each carries an Ed25519 signature over `domain || validator_pubkey || block_hash`. |
-| `registry`            | `&ValidatorRegistry`        | Trusted set: validator pubkey → stake (micro-ARX). Populated by the caller; on-chain sync is future work (§9). |
+| `registry`            | `&ValidatorRegistry`        | Trusted set: validator pubkey → stake (micro-ARX). Populated by the caller; sync from the ledger is future work (§9). |
 
 ---
 
@@ -205,7 +208,7 @@ amount <= L0_CAP_MICRO_ARX  AND
   registered-but-bad signatures surface
   `Err(FinalityError::SignatureInvalid)`.
 - `L0` is reachable **fully offline**, so long as at least one
-  registered local peer (typically a BLE neighbor in the
+  registered local peer (a nearby node in the
   `ValidatorRegistry`) has observed, signed, and forwarded a
   confirmation for the block.
 - `L0` is not safe against equivocation by the sender: a malicious
@@ -267,9 +270,9 @@ The threshold is `L2_QUORUM_FRACTION = 0.67`
 encoded as the integer-ratio check `accepted * 100 >= total * 67`
 to avoid f64 rounding at `u64::MAX` scale (saturating-mul also
 prevents overflow on adversarial stake values). It matches the
-classical Byzantine `2/3` bound — see also
+classical Byzantine `2/3` bound; see also
 [`QUORUM_FRACTION`](../../crates/arxia-core/src/constants.rs)
-which is used by the consensus-layer `check_quorum` (§5.3).
+whose 2/3 bound `check_quorum` applies in integer form (§5.3).
 
 A vote is a [`SignedValidatorVote`](../../crates/arxia-finality/src/lib.rs)
 carrying an Ed25519 signature from a registered validator over
@@ -282,7 +285,7 @@ same validator count their stake **once** (the
 inflation by repeated submission).
 
 A block at `L2` is the strongest finality guarantee the protocol
-offers: it is safe against any colluding minority holding less than
+currently implements: it is safe against any colluding minority holding less than
 `1/3` of the registered stake.
 
 ### 4.5. Priority
@@ -295,7 +298,7 @@ This is pinned by `test_assess_l2_takes_priority_over_l1_and_l0`.
 
 ## 5. Open Representative Voting (ORV)
 
-`L2` is produced by Open Representative Voting. A voter is a **staked
+`L2` is meant to be produced by Open Representative Voting. The two are not yet connected (see §5.3). A voter is a **staked
 representative** whose votes are weighted by their **delegated stake**.
 
 Reference:
@@ -333,8 +336,9 @@ vote-hash preimage is little-endian. This asymmetry is frozen for
 ### 5.2. Representative eligibility
 
 A public key is an ORV representative for a given epoch iff its
-delegated stake is `>= MIN_DELEGATION_FRACTION * total_supply`, where
-`MIN_DELEGATION_FRACTION = 0.001` (0.1% of total supply).
+delegated stake is at least 0.1% of total supply: `total_supply / MIN_REPRESENTATIVE_STAKE_DENOM`, with
+`MIN_REPRESENTATIVE_STAKE_DENOM = 1_000` and integer division (`crates/arxia-consensus/src/orv.rs`).
+`MIN_DELEGATION_FRACTION` in `arxia-core::constants` states the same fraction but no code reads it.
 [`collect_votes`](../../crates/arxia-consensus/src/orv.rs) filters
 ineligible voters out before quorum calculation.
 
@@ -352,11 +356,7 @@ ineligible voters out before quorum calculation.
 denominator for `MIN_STAKE_FRACTION`, distinct from the total
 protocol supply cap.
 
-When both components hold, quorum is reached and
-`validator_pct = voted_stake / total_supply` is reported into
-`assess_finality`, which then evaluates `>= 0.67` for the `L2`
-predicate. In practice `L2` requires the strictly stronger
-`validator_pct >= 0.67`.
+When both components hold, quorum is reached. `check_quorum` is not yet wired into `assess_finality`: the finality layer runs its own stake check over `SignedValidatorVote`s against the `ValidatorRegistry` (§4.4), and connecting the two is listed as future work (§9, consensus to finality vote bridge).
 
 ---
 
@@ -439,15 +439,13 @@ A block that has been the **loser** of a reconciled conflict cannot
 subsequently be promoted past `Pending`. From the perspective of
 `assess_finality`, the block's account chain will surface
 `SyncResult::Mismatch(n)` for that block, blocking `L1`, and no
-well-behaved validator will sign an ORV vote for it, blocking `L2`.
+well-behaved validator will sign a validator vote (`SignedValidatorVote`) for it, blocking `L2`.
 
 ---
 
 ## 8. Defense-in-depth against double-spend
 
-The finality model is one of three layers that together prevent
-double-spend. The other two sit below it in the lattice and gossip
-layers.
+The finality model is one of three layers that together keep a double spend from surviving. The other two sit below it in the lattice and gossip layers. Until two groups that cannot see each other reconnect, each can confirm its own side of a conflicting pair: at `L0` (capped at 10 ARX) with a single registered peer, and at `L1` with the peers in reach (no value cap is enforced in code above `L0`). When they reconnect, one block per `(account, nonce)` survives (§4.2, §6, §7).
 
 | Layer             | Mechanism                                                                            | Bug fix reference |
 |-------------------|--------------------------------------------------------------------------------------|-------------------|
@@ -458,7 +456,7 @@ layers.
 | Lattice           | `timestamp` is part of the hash preimage — cannot be mutated in-flight.              | Bug 5 (PR #19)    |
 | Gossip            | `NonceRegistry` keyed on `(account, nonce)`; registered conflicts surface at sync.   | Bug 4 (PR #18)    |
 | CRDT reconciler   | One block per `(account, nonce)` + `balance >= 0` post-merge.                        | Bug 7 (PR #20)    |
-| Finality (L2)     | `2/3` stake quorum on ORV votes for the specific block hash.                         | —                 |
+| Finality (`L2`, full consensus) | Signed votes from registered validators holding at least 67% of registered stake for this block hash (§4.4); not yet fed by ORV (§5.3). | none              |
 
 ---
 
@@ -467,7 +465,7 @@ layers.
 The following are planned extensions and are explicitly **not** part of
 the `v0.1.x` normative spec:
 
-- **On-chain ValidatorRegistry sync.** The `ValidatorRegistry` is
+- **Ledger-sourced ValidatorRegistry sync.** The `ValidatorRegistry` is
   populated by the caller today. A future commit will sync it from
   the consensus layer (representative stake + delegation accumulator)
   so that `assess_finality` reads the registry directly from the
@@ -489,13 +487,10 @@ the `v0.1.x` normative spec:
   [`Delegation`](../../crates/arxia-consensus/src/delegation.rs) struct
   and the delegation accumulator exist, but representative stake is
   currently passed into the vote directly rather than reconstructed
-  from on-chain delegations.
+  from delegations recorded in the ledger.
 - **Transport-aware weighting.** The assessor is transport-agnostic.
   Future versions may weight confirmations differently for BLE vs. LoRa
   vs. satellite based on reliability profiles.
-- **Global supply accumulator.** The per-account cap is enforced but
-  no global supply invariant is checked at OPEN time. Adding a
-  cumulative-supply guard is a tracked follow-up.
 - **Replay-window protection.** A signed vote / confirmation is
   forever valid for its bound `block_hash`. Replay protection
   beyond block-hash binding (timestamps, freshness windows) belongs
@@ -514,9 +509,10 @@ the `v0.1.x` normative spec:
 | `L2_QUORUM_FRACTION`                | `0.67`                      | `arxia-finality` | `assess_finality` (integer-ratio check `accepted * 100 ≥ total * 67`) |
 | `FINALITY_CONFIRMATION_DOMAIN`      | `b"arxia-finality-confirmation-v1"` (30 B) | `arxia-finality` | `SignedConfirmation::canonical_bytes` / `verify` |
 | `FINALITY_VALIDATOR_VOTE_DOMAIN`    | `b"arxia-finality-validator-vote-v1"` (32 B) | `arxia-finality` | `SignedValidatorVote::canonical_bytes` / `verify` |
-| `QUORUM_FRACTION`                   | `2.0 / 3.0` (`0.6666…`)     | `arxia-core::constants` | `check_quorum` (consensus-layer ORV; conceptually equivalent to `L2_QUORUM_FRACTION`, kept distinct because the two subsystems may diverge in calibration). |
-| `MIN_STAKE_FRACTION`                | `0.20` (20%)                | `arxia-core::constants` | `check_quorum` |
-| `MIN_DELEGATION_FRACTION`           | `0.001` (0.1%)              | `arxia-core::constants` | `collect_votes` |
+| `QUORUM_FRACTION`                   | `2.0 / 3.0` (`0.6666…`)     | `arxia-core::constants` | not read by code; `check_quorum` applies `voted_reps * 3 >= total_reps * 2` |
+| `MIN_STAKE_FRACTION`                | `0.20` (20%)                | `arxia-core::constants` | not read by code; `check_quorum` applies `voted_stake * 5 >= total_supply` |
+| `MIN_DELEGATION_FRACTION`           | `0.001` (0.1%)              | `arxia-core::constants` | not read by code; `collect_votes` uses `MIN_REPRESENTATIVE_STAKE_DENOM` |
+| `MIN_REPRESENTATIVE_STAKE_DENOM`    | `1_000` (0.1% of supply)    | `arxia-consensus::orv` | `collect_votes` |
 | `MAX_INITIAL_BALANCE_PER_ACCOUNT`   | `100_000_000 * ONE_ARX`     | `arxia-core::constants` | OPEN supply cap |
 | `ONE_ARX`                           | `1_000_000` micro-ARX       | `arxia-core::constants` | unit conversion |
 
@@ -559,4 +555,4 @@ The following tests pin the normative behavior in this document.
 | Version | Change |
 |---------|--------|
 | `0.1.0` | Initial 4-tier model (Pending / L0 / L1 / L2); ORV quorum `2/3 stake AND 20% supply`; stake/hash conflict cascade; CRDT reconciliation with non-negative balance invariant. |
-| `0.2.0` (PR #47) | `assess_finality` switched to authenticated inputs to close audit findings **CRIT-007** (caller-supplied `validator_pct`) and **CRIT-008** (caller-supplied `local_confirmations`). New types: `SignedConfirmation`, `SignedValidatorVote`, `ValidatorRegistry`, `FinalityError`. Two distinct domain prefixes (`arxia-finality-confirmation-v1`, `arxia-finality-validator-vote-v1`) prevent cross-protocol replay. `L2_QUORUM_FRACTION = 0.67` is now an integer-ratio check `accepted * 100 ≥ total * 67` (no f64 rounding at u64::MAX scale). Return type is `Result<FinalityLevel, FinalityError>`. |
+| `0.2.0` (PR #47) | `assess_finality` switched to authenticated inputs to close internal security review findings **CRIT-007** (caller-supplied `validator_pct`) and **CRIT-008** (caller-supplied `local_confirmations`). New types: `SignedConfirmation`, `SignedValidatorVote`, `ValidatorRegistry`, `FinalityError`. Two distinct domain prefixes (`arxia-finality-confirmation-v1`, `arxia-finality-validator-vote-v1`) prevent cross-protocol replay. `L2_QUORUM_FRACTION = 0.67` is now an integer-ratio check `accepted * 100 ≥ total * 67` (no f64 rounding at u64::MAX scale). Return type is `Result<FinalityLevel, FinalityError>`. |

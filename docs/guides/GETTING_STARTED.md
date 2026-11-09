@@ -8,7 +8,7 @@
 ## Clone and Build
 
 ```bash
-git clone https://github.com/ArxiaLayer1/Arxia.git
+git clone https://github.com/ArxiaNetwork/Arxia.git
 cd Arxia
 cargo build --workspace
 ```
@@ -51,6 +51,8 @@ cargo run -p partition_reconciliation
 cargo run --bin arxia-node
 ```
 
+The node binary is a stub: it logs a version line and a `STUB BINARY` warning that points to [`docs/SECURITY_INTERFACES.md`](../SECURITY_INTERFACES.md), then exits. There is no running node yet.
+
 ## CLI Tools
 
 ```bash
@@ -72,29 +74,16 @@ cargo run --bin arxia-cli -- did
 > **Backup the keypair file offline.** It contains the only copy of the
 > Ed25519 secret seed. Never share it or commit it to version control.
 
-## ESP32 Development
+## Embedded Builds
 
-Install the ESP32 toolchain:
-
-```bash
-cargo install espup
-espup install
-. ~/export-esp.sh
-```
-
-Build for ESP32 (not in workspace):
+The portable core compiles for bare metal embedded targets. CI checks it on `riscv32imc-unknown-none-elf`:
 
 ```bash
-cd targets/esp32
-cargo build --target xtensa-esp32-none-elf
+rustup target add riscv32imc-unknown-none-elf
+cargo build -p arxia-core -p arxia-crypto -p arxia-storage -p arxia-storage-flash -p arxia-flash-bench --no-default-features --target riscv32imc-unknown-none-elf
 ```
 
-Testing with QEMU:
-
-```bash
-cargo install espflash
-espflash run --monitor --target esp32
-```
+The T-Beam firmware built today is the power-loss bench in `targets/esp32-bench`, a standalone Cargo project (not a workspace member) with its own Xtensa toolchain. Build and flashing steps are in [`targets/esp32-bench/README.md`](../../targets/esp32-bench/README.md). `targets/esp32` is a placeholder crate; node firmware is not built yet.
 
 ## Project Structure
 
@@ -106,7 +95,8 @@ Arxia/
   tools/           # CLI tools
   examples/        # Example programs (each is its own workspace
                    #   member binary; invoke with `cargo run -p`)
-  contracts/       # Smart contract examples
+  contracts/       # Example state machines in plain Rust (escrow,
+                   #   time lock); no runtime executes them
   targets/         # Hardware targets (ESP32)
   docs/            # Documentation
 ```

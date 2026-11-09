@@ -15,7 +15,7 @@ is enforced by the API design.
 
 ## Blake3
 
-- **Purpose**: Block hashing, DID derivation, contract addressing
+- **Purpose**: Block hashing, DID derivation
 - **Output**: 32 bytes (256 bits)
 - **Why**: Faster than SHA-256, SIMD-optimized, tree-hashable for parallelism
 
@@ -31,9 +31,8 @@ is enforced by the API design.
   `Err(Unimplemented)`. They previously panicked via `todo!()`, which
   was the CRIT-002 finding; the new return shape forces any caller to
   handle the not-yet-implemented case at compile time. A real
-  implementation will land in a dedicated commit pass (target
-  milestone: M12-M18); until then, **do not assume on-disk encryption
-  is active**.
+  implementation will land in a dedicated commit; until then, **do not
+  assume on-disk encryption is active**.
 
 ## SLIP39 (Shamir Secret Sharing)
 
@@ -43,16 +42,11 @@ is enforced by the API design.
 - **Status (post-CRIT-003 / PR #41)**: **stub**.
   `arxia_crypto::slip39::{split_seed, reconstruct_seed}` return
   `Result<_, Unimplemented> = Err(Unimplemented)`. Same posture as
-  ChaCha20-Poly1305 above — the public surface is preserved so
+  ChaCha20-Poly1305 above: the public surface is preserved so
   callers fail at compile time rather than runtime, but no actual
-  Shamir Secret Sharing happens. Real implementation deferred to its
-  own audited commit.
+  Shamir Secret Sharing happens. Real implementation deferred to a
+  dedicated commit.
 
 ## ESP32 Performance
 
-| Operation          | ESP32 (240 MHz) | Status   |
-|--------------------|-----------------|----------|
-| Ed25519 sign       | ~15 ms          | shipped  |
-| Ed25519 verify     | ~40 ms          | shipped  |
-| Blake3 (1 KB)      | ~0.1 ms         | shipped  |
-| ChaCha20 (1 KB)    | ~0.05 ms        | projected (stub returns `Err(Unimplemented)` today) |
+No ESP32 timing for Ed25519, Blake3 or ChaCha20 is measured or published in this repository yet.

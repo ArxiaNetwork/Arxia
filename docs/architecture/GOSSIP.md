@@ -8,13 +8,13 @@ nonce)` registry, and detects double-spends across the mesh network.
 The security review introduced two structural hardenings that earlier versions of
 this document did not reflect:
 
-- **Bounded state on every `GossipNode`** (audit ID **CRIT-011**,
+- **Bounded state on every `GossipNode`** (internal review ID **CRIT-011**,
   closed by PR #45). `known_blocks` and `nonce_registry` are bounded
   to documented capacities with FIFO drop-oldest eviction and
   observable drop counters. A peer flooding valid signed blocks
   cannot OOM the node.
-- **Authenticated message envelope** (`SignedGossipMessage`, audit
-  ID **CRIT-010**, closed by PR #46). Every gossip message is
+- **Authenticated message envelope** (`SignedGossipMessage`, internal
+  review ID **CRIT-010**, closed by PR #46). Every gossip message is
   wrapped in an Ed25519-signed envelope bound to the sender's
   public key under the domain prefix `arxia-gossip-msg-v1`. Forging
   a message at the gossip layer requires forging a signature.
@@ -73,8 +73,10 @@ pub fn merge_nonce_registries(
 
 Merge never silently overwrites: a divergent hash at the same
 `(account, nonce)` is returned as a `NonceConflict`. Resolution is
-delegated to the ORV stake-weighted vote
-(`arxia-consensus::conflict::resolve_conflict_orv`).
+left to the caller. The stake-weighted resolver
+`arxia-consensus::conflict::resolve_conflict_orv` is implemented as a
+library, but nothing calls it yet; partition reconciliation keeps the
+block with the smaller hash.
 
 `merge_nonce_registries` operates on raw `BTreeMap`s. The bounded-
 state machinery on `GossipNode::merge_registry` (§3) is what enforces
@@ -175,8 +177,7 @@ local:  ((account_A, 5), hash=0xabc...)
 remote: ((account_A, 5), hash=0xdef...)  // → NonceConflict
 ```
 
-Resolution is the consensus layer's job (ORV vote, then hash
-tiebreaker — see `FINALITY_MODEL.md` §6).
+Resolution is left to the caller (§2). The stake-weighted resolver `arxia-consensus::conflict::resolve_conflict_orv` is implemented as a library, but nothing calls it yet; partition reconciliation keeps the block with the smaller hash (see `FINALITY_MODEL.md` §6.3 and §7).
 
 ---
 
@@ -190,7 +191,7 @@ pub enum SyncResult {
 }
 ```
 
-`Success` from `sync_nonces_before_l1` is the L1-finality predicate
+`Success` from `sync_nonces_before_l1` is the Mesh-tier finality predicate (code `FinalityLevel::L1`)
 (see `FINALITY_MODEL.md` §4.3). `Mismatch(n)` propagates the conflict
 count to higher layers without revealing which keys diverged
 (callers that need the per-key list use `merge_registry` directly).
@@ -377,5 +378,5 @@ reputation logic all belong to that future layer.
 | Version | Change |
 |---------|--------|
 | `0.1.x` | Initial gossip protocol: nonce registry, double-spend detection at merge, SyncResult variants. |
-| `0.2.0` (PR #45) | `GossipNode::known_blocks` and `nonce_registry` bounded with `MAX_KNOWN_BLOCKS` / `MAX_NONCE_REGISTRY_ENTRIES` defaults of 10 000 each. FIFO drop-oldest eviction; observable counters via `known_blocks_dropped()` / `nonce_registry_dropped()`. Idempotent `add_block` no longer grows the collections. Closes audit finding **CRIT-011**. |
-| `0.2.0` (PR #46) | `SignedGossipMessage` envelope wrapping `GossipMessage` with Ed25519 sender authentication under domain prefix `arxia-gossip-msg-v1`. New `verify()` API; `canonical_bytes` layout with 1-byte variant tags + length-prefixed big-endian payloads. Closes audit finding **CRIT-010**. |
+| `0.2.0` (PR #45) | `GossipNode::known_blocks` and `nonce_registry` bounded with `MAX_KNOWN_BLOCKS` / `MAX_NONCE_REGISTRY_ENTRIES` defaults of 10 000 each. FIFO drop-oldest eviction; observable counters via `known_blocks_dropped()` / `nonce_registry_dropped()`. Idempotent `add_block` no longer grows the collections. Closes internal review finding **CRIT-011**. |
+| `0.2.0` (PR #46) | `SignedGossipMessage` envelope wrapping `GossipMessage` with Ed25519 sender authentication under domain prefix `arxia-gossip-msg-v1`. New `verify()` API; `canonical_bytes` layout with 1-byte variant tags + length-prefixed big-endian payloads. Closes internal review finding **CRIT-010**. |
