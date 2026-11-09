@@ -110,7 +110,7 @@ settling with no internet in the loop, filmed and published.
 
 ## Quick Start
 
-Requirements: Git, and Rust 1.89.0 (pinned in `rust-toolchain.toml`)
+Requirements: Git, and Rust 1.90.0 (pinned in `rust-toolchain.toml`)
 installed with `rustup`, so that the toolchain is on `PATH`. A dependency's
 build script invokes `rustc` from `PATH`; see
 [docs/dependency-risks.md](docs/dependency-risks.md).

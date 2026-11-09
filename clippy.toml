@@ -10,4 +10,4 @@
 # the Xtensa toolchain (esp-rs/rust-build) has a matching
 # release — it tracks stable with a lag, and the T-Beam target
 # depends on it.
-msrv = "1.89.0"
+msrv = "1.90.0"

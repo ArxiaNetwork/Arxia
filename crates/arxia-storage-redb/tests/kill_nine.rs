@@ -12,7 +12,7 @@
 //! - every batch `1..=last_seq` is present in full, bytes verified,
 //! - nothing beyond `last_seq` exists, not one key.
 //!
-//! Three rounds run against the same file, so the sequence is
+//! Several rounds run against the same file, so the sequence is
 //! crash -> repair/reopen -> keep writing -> crash again, which is a
 //! node's actual life on flaky power.
 //!
@@ -30,13 +30,20 @@
 //! stable media. That needs hardware whose plug can be pulled; it is
 //! planned for the T-Beam bench.
 //!
-//! The batch payload is kept modest and the file is pre-grown before
-//! the first kill window: redb 4.1.0 has two upstream crash windows
-//! during file growth/resize (fixed in the unreleased 4.2.0, see
-//! docs/dependency-risks.md) that can leave a database unopenable.
-//! Hammering growth during the kill window would make this test flake
-//! on an upstream bug we cannot fix; once the pin moves to 4.2.0 an
-//! aggressive-growth round should be added here.
+//! # Large values, and what a kill cannot reach
+//!
+//! redb 4.1.0 had two crash windows around file growth, fixed in 4.2.0
+//! (see docs/dependency-risks.md, "redb crash windows during file
+//! growth"). Both need a storage-level failure: a file extension or a
+//! header write that never reached the disk. A process kill cannot
+//! produce that, because the operating system keeps every write the
+//! process completed, so this harness does not reproduce them and
+//! passes on 4.1.0 as well. What it checks is the recovery contract
+//! without help: the file is no longer pre-grown before the first kill
+//! window, and a second test writes eight 64 KiB values per batch, so
+//! every batch spans many pages and the file grows several times during
+//! the run (redb doubles it), with the kill point swept across the
+//! batch.
 
 use arxia_storage::{BatchOp, StorageBackend};
 use arxia_storage_redb::RedbStorage;
@@ -44,22 +51,30 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 
 const CHILD_ENV: &str = "ARXIA_KILL9_CHILD_DB";
+/// Value length the parent asks the child to write.
+const PAYLOAD_LEN_ENV: &str = "ARXIA_KILL9_PAYLOAD_LEN";
 const PAYLOAD_KEYS_PER_BATCH: usize = 8;
+/// Steady-state payload: small values, mostly page reuse.
 const PAYLOAD_LEN: usize = 256;
+/// Large payload: eight new 64 KiB values per batch, nothing ever
+/// deleted. redb doubles the file when it runs out of space, so the
+/// file grows several times during the run, not on every commit.
+const LARGE_PAYLOAD_LEN: usize = 64 * 1024;
 
 fn payload_key(seq: u64, i: usize) -> Vec<u8> {
     format!("b:{seq:010}:{i}").into_bytes()
 }
 
 /// Deterministic per-(seq, i) payload so the verifier checks bytes,
-/// not mere existence.
-fn payload_value(seq: u64, i: usize) -> Vec<u8> {
-    format!("payload-{seq}-{i}-")
-        .into_bytes()
-        .into_iter()
-        .cycle()
-        .take(PAYLOAD_LEN)
-        .collect()
+/// not mere existence: a header naming the batch and key, then a fill
+/// byte that also depends on both. Built with a single fill rather than
+/// an iterator chain, so that even in a debug build the writer spends
+/// its time inside the commit, where the kill is meant to land.
+fn payload_value(seq: u64, i: usize, len: usize) -> Vec<u8> {
+    let mut value = format!("payload-{seq}-{i}-").into_bytes();
+    value.truncate(len);
+    value.resize(len, (seq as u8).wrapping_mul(31) ^ (i as u8));
+    value
 }
 
 fn read_last_seq(store: &RedbStorage) -> u64 {
@@ -72,24 +87,20 @@ fn read_last_seq(store: &RedbStorage) -> u64 {
     }
 }
 
+/// Child mode: the database path and payload length the parent passed.
+fn child_mode() -> Option<(String, usize)> {
+    let db_path = std::env::var(CHILD_ENV).ok()?;
+    let len = std::env::var(PAYLOAD_LEN_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(PAYLOAD_LEN);
+    Some((db_path, len))
+}
+
 /// The writer the parent kills. Never returns.
-fn writer_child(db_path: &str) -> ! {
+fn writer_child(db_path: &str, payload_len: usize) -> ! {
     let mut store = RedbStorage::open(db_path).expect("child: open db");
     let mut seq = read_last_seq(&store);
-
-    // Pre-grow the file once, before the parent's kill window opens
-    // (the parent only starts counting at the first COMMITTED line):
-    // a few hundred KiB written and deleted in committed transactions,
-    // so later batches mostly reuse pages instead of growing the file
-    // inside the kill window. See the module docs for why.
-    if seq == 0 {
-        let big = vec![0xA5u8; 64 * 1024];
-        for i in 0..8u8 {
-            let key = format!("pregrow:{i}").into_bytes();
-            store.put(&key, &big).expect("child: pregrow put");
-            store.delete(&key).expect("child: pregrow delete");
-        }
-    }
 
     loop {
         seq += 1;
@@ -97,7 +108,7 @@ fn writer_child(db_path: &str) -> ! {
             .map(|i| payload_key(seq, i))
             .collect();
         let values: Vec<Vec<u8>> = (0..PAYLOAD_KEYS_PER_BATCH)
-            .map(|i| payload_value(seq, i))
+            .map(|i| payload_value(seq, i, payload_len))
             .collect();
         let marker = seq.to_string().into_bytes();
 
@@ -122,10 +133,11 @@ fn writer_child(db_path: &str) -> ! {
     }
 }
 
-fn spawn_writer(db_path: &std::path::Path) -> Child {
+fn spawn_writer(db_path: &std::path::Path, test_name: &str, payload_len: usize) -> Child {
     Command::new(std::env::current_exe().expect("current exe"))
-        .args(["batches_survive_a_process_kill", "--exact", "--nocapture"])
+        .args([test_name, "--exact", "--nocapture"])
         .env(CHILD_ENV, db_path)
+        .env(PAYLOAD_LEN_ENV, payload_len.to_string())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -225,7 +237,12 @@ fn kill_after(child: &mut Child, min_batches: u64, kill_fraction: f64) -> u64 {
 /// all beyond. `seen_by_parent` bounds where `last_seq` may legally
 /// fall: no lower than the last line the parent read, no higher than
 /// that plus the pipe's worth of in-flight batches.
-fn verify_all_or_nothing(store: &RedbStorage, seen_by_parent: u64, probe_beyond: u64) {
+fn verify_all_or_nothing(
+    store: &RedbStorage,
+    seen_by_parent: u64,
+    probe_beyond: u64,
+    payload_len: usize,
+) {
     let last_seq = read_last_seq(store);
     assert!(
         last_seq >= seen_by_parent,
@@ -241,7 +258,7 @@ fn verify_all_or_nothing(store: &RedbStorage, seen_by_parent: u64, probe_beyond:
                 .unwrap_or_else(|| panic!("batch {seq} incomplete: key {i} missing"));
             assert_eq!(
                 got,
-                payload_value(seq, i),
+                payload_value(seq, i, payload_len),
                 "batch {seq} key {i}: payload bytes corrupted"
             );
         }
@@ -257,44 +274,81 @@ fn verify_all_or_nothing(store: &RedbStorage, seen_by_parent: u64, probe_beyond:
     }
 }
 
-#[test]
-fn batches_survive_a_process_kill() {
-    // Child mode: this same test, re-invoked by `spawn_writer` with
-    // the env var set, becomes the writer and never returns.
-    if let Ok(db_path) = std::env::var(CHILD_ENV) {
-        writer_child(&db_path);
-    }
-
+/// Run the kill rounds against one file and return the final
+/// `last_seq`. Each round waits for `min_batches` more commits, then
+/// kills at `kill_fraction` of one batch duration.
+fn run_rounds(test_name: &str, payload_len: usize, rounds: &[(u64, f64)]) -> u64 {
     let dir = tempfile::tempdir().expect("create temp dir");
     let db_path = dir.path().join("kill9.redb");
 
-    // Rounds on one file: crash, reopen, keep writing, crash again.
-    // The fractions sweep the kill point across the interior of a
-    // batch — early, middle, late — so it cannot be systematically
-    // synchronised with any phase of the commit.
     let mut cumulative = 0u64;
-    for (min_batches, kill_fraction) in [
-        (25u64, 0.15),
-        (30, 0.35),
-        (30, 0.55),
-        (30, 0.75),
-        (30, 0.95),
-    ] {
-        let mut child = spawn_writer(&db_path);
+    for &(min_batches, kill_fraction) in rounds {
+        let mut child = spawn_writer(&db_path, test_name, payload_len);
         let seen = kill_after(&mut child, cumulative + min_batches, kill_fraction);
 
         let store = RedbStorage::open(&db_path)
             .expect("a crashed writer must not leave the database unopenable");
-        verify_all_or_nothing(&store, seen, 50);
+        verify_all_or_nothing(&store, seen, 50, payload_len);
         cumulative = read_last_seq(&store);
         // Drop the parent's handle before the next child opens the
         // file — only one process may hold the database at a time.
         drop(store);
     }
+    cumulative
+}
+
+#[test]
+fn batches_survive_a_process_kill() {
+    // Child mode: this same test, re-invoked by `spawn_writer` with
+    // the env var set, becomes the writer and never returns.
+    if let Some((db_path, payload_len)) = child_mode() {
+        writer_child(&db_path, payload_len);
+    }
+
+    // Rounds on one file: crash, reopen, keep writing, crash again.
+    // The fractions sweep the kill point across the interior of a
+    // batch, early, middle and late, so it cannot be systematically
+    // synchronised with any phase of the commit.
+    let cumulative = run_rounds(
+        "batches_survive_a_process_kill",
+        PAYLOAD_LEN,
+        &[(25, 0.15), (30, 0.35), (30, 0.55), (30, 0.75), (30, 0.95)],
+    );
 
     assert!(
         cumulative >= 145,
         "five rounds should have accumulated at least the sum of the \
+         thresholds, got {cumulative}"
+    );
+}
+
+#[test]
+fn batches_survive_a_process_kill_with_large_values() {
+    if let Some((db_path, payload_len)) = child_mode() {
+        writer_child(&db_path, payload_len);
+    }
+
+    // Every batch adds 512 KiB of new keys, and the file grows several
+    // times during the run. Eight kills on one file, with the kill
+    // point swept across the batch.
+    let cumulative = run_rounds(
+        "batches_survive_a_process_kill_with_large_values",
+        LARGE_PAYLOAD_LEN,
+        &[
+            (4, 0.10),
+            (4, 0.25),
+            (4, 0.40),
+            (4, 0.55),
+            (4, 0.70),
+            (4, 0.85),
+            (4, 0.95),
+            (4, 0.50),
+        ],
+    );
+
+    assert!(
+        cumulative >= 32,
+        "eight rounds should have accumulated at least the sum of the \
          thresholds, got {cumulative}"
     );
 }

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 # The bench firmware builds with the Xtensa fork toolchain, not the
-# workspace's pinned 1.89.0; it is its own project with its own lockfile.
+# workspace's pinned 1.90.0; it is its own project with its own lockfile.
 exclude = ["targets/esp32-bench"]
 members = [
     "crates/arxia-core",
@@ -37,7 +37,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 authors = []
-rust-version = "1.89.0"
+rust-version = "1.90.0"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/ArxiaNetwork/Arxia"
 homepage = "https://arxia.network"
@@ -66,7 +66,7 @@ tracing-subscriber = "0.3"
 criterion = { version = "0.7", features = ["html_reports"] }
 rand = "0.10.2"
 thiserror = "2.0"
-redb = "4.1"
+redb = "4.4"
 sequential-storage = { version = "8.0.1", default-features = false }
 tempfile = "3"
 bs58 = "0.5"

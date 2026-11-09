@@ -196,7 +196,7 @@ pub const SCAN_WINDOW: usize = 8;
 pub fn poll_once<F: Future>(future: F) -> Result<F::Output, ArxiaError> {
     let mut future = pin!(future);
     // `Waker::noop` has been stable since 1.85 and the workspace
-    // pins 1.89, so the crate needs no hand-rolled vtable and
+    // pins 1.90, so the crate needs no hand-rolled vtable and
     // therefore no `unsafe` at all.
     let mut cx = Context::from_waker(Waker::noop());
     match future.as_mut().poll(&mut cx) {

@@ -40,10 +40,13 @@
 //!   drive's write cache, so whether the fsync reached stable media is
 //!   invisible to it. Power-loss behaviour is a hardware test (planned
 //!   for the T-Beam bench, where the plug can actually be pulled).
-//! - redb 4.1.0 has two upstream crash bugs fixed only in the
-//!   unreleased 4.2.0, both able to leave a database unopenable after
-//!   a file-growth or resize during commit. See
-//!   `docs/dependency-risks.md`; the pin moves to 4.2.0 when it ships.
+//! - The workspace pins redb 4.4.x. The two crash windows around file
+//!   growth that 4.1.0 carried were fixed upstream in 4.2.0. They need
+//!   a storage-level failure such as a power cut, which the kill-nine
+//!   test cannot produce. See `docs/dependency-risks.md`.
+//! - Since redb 4.2.0, a commit that fails part way leaves the database
+//!   refusing further write transactions until it is reopened, which
+//!   repairs it. After a storage error on a write, reopen the store.
 //! - `put` and `delete` each commit (and therefore fsync) their own
 //!   transaction. Correct first; batching is what `apply_batch` is
 //!   for.

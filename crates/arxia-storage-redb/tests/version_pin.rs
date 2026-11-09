@@ -1,19 +1,19 @@
-//! Pin redb to the reviewed 4.1.x line.
+//! Pin redb to the reviewed 4.4.x line.
 //!
-//! redb 4.1.0 carries two documented crash windows around file
-//! growth/resize, accepted deliberately in `docs/dependency-risks.md`
-//! with an exit plan. The exit plan is the point of this pin: when
-//! 4.2.0 ships claiming to fix them, it must be *validated* — the
-//! kill-nine harness pointed at the exact growth paths it says it
-//! repaired, with the pre-growth mitigation removed — not adopted
-//! because a changelog says so. This test makes a silent drift to
-//! 4.2.0 (a lockfile bump, a Dependabot PR, a `cargo update`) fail
-//! loudly until that review happens.
+//! redb 4.1.0 carried two crash windows around file growth and resize,
+//! fixed upstream in 4.2.0. They need a storage-level failure, which a
+//! process kill cannot produce, so the move to 4.4.0 rests on the
+//! upstream fix plus a review: the kill-nine suite passes without the
+//! pre-growth mitigation and with large values, and a database written
+//! by 4.1.0 was opened and extended by 4.4.0 (see
+//! `docs/dependency-risks.md`). This test makes a silent drift to
+//! another minor line (a lockfile bump, a Dependabot PR, a `cargo
+//! update`) fail loudly until the same review happens again.
 //!
 //! Same mechanism as the LOW-014 pins in `arxia-core`: the lockfile is
 //! the resolved truth, so the assertion reads it rather than the
 //! manifest. `deny.toml` carries the matching envelope
-//! (`>=4.1.0, <4.2.0`) as the conventional anchor; nothing in CI runs
+//! (`>=4.4.0, <4.5.0`) as the conventional anchor; nothing in CI runs
 //! cargo-deny today, so this test is the enforcement — which is why it
 //! checks the exact envelope, not a prefix, and every resolved copy,
 //! not the first: semver-incompatible duplicates resolve as separate
@@ -50,15 +50,14 @@ fn every_resolved_redb_lies_inside_the_reviewed_envelope() {
         });
         let (major, minor) = (parts.next().expect("major"), parts.next().expect("minor"));
         assert!(
-            major == 4 && minor == 1,
+            major == 4 && minor == 4,
             "redb resolved to {version}, outside the reviewed envelope \
-             >=4.1.0 <4.2.0. If this is the move to 4.2.0: run the \
-             kill-nine harness against the growth paths 4.2.0 claims to \
-             fix (remove the pre-growth mitigation, add the \
-             aggressive-growth round), update docs/dependency-risks.md \
-             and deny.toml, and only then update this pin. See \
-             dependency-risks.md, section \"redb crash windows during \
-             file growth\"."
+             >=4.4.0 <4.5.0. Before accepting another line: run the \
+             kill-nine suite with its large-value test, open a database \
+             written by the pinned version with the candidate, update \
+             docs/dependency-risks.md and deny.toml, and only then update \
+             this pin. See dependency-risks.md, section \"redb crash \
+             windows during file growth\"."
         );
     }
 }
