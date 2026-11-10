@@ -5,16 +5,26 @@ on:
     branches: [main]
     paths:
       - "targets/esp32/**"
+      - "targets/esp32-bench/**"
       - "crates/arxia-core/**"
       - "crates/arxia-crypto/**"
       - "crates/arxia-lattice/**"
+      - "crates/arxia-storage/**"
+      - "crates/arxia-storage-flash/**"
+      - "crates/arxia-flash-bench/**"
+      - ".github/workflows/esp32.yml"
   pull_request:
     branches: [main]
     paths:
       - "targets/esp32/**"
+      - "targets/esp32-bench/**"
       - "crates/arxia-core/**"
       - "crates/arxia-crypto/**"
       - "crates/arxia-lattice/**"
+      - "crates/arxia-storage/**"
+      - "crates/arxia-storage-flash/**"
+      - "crates/arxia-flash-bench/**"
+      - ".github/workflows/esp32.yml"
 
 env:
   CARGO_TERM_COLOR: always
@@ -54,14 +64,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Install the Xtensa toolchain
+        run: |
+          # Both espup and the Xtensa Rust release are pinned, so a new
+          # upstream release cannot change this job. 1.95.0.0 is the
+          # release the bench firmware is built and checked with locally.
+          # curl -f fails on an HTTP error instead of saving the error
+          # page as the binary.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 \
+            https://github.com/esp-rs/espup/releases/download/v0.17.1/espup-x86_64-unknown-linux-gnu -o espup
+          chmod a+x espup
+          # espup downloads from GitHub release assets, which can answer
+          # 504 for a while: retry the whole install before giving up.
+          for attempt in 1 2 3; do
+            ./espup install --targets esp32 --toolchain-version 1.95.0.0 && exit 0
+            echo "espup install failed (attempt $attempt), retrying in 30 s"
+            sleep 30
+          done
+          exit 1
+      # After the install: the cache step runs cargo, which needs the
+      # esp toolchain that rust-toolchain.toml names.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "targets/esp32-bench -> target"
-      - name: Install the Xtensa toolchain
-        run: |
-          curl -L https://github.com/esp-rs/espup/releases/download/v0.17.1/espup-x86_64-unknown-linux-gnu -o espup
-          chmod a+x espup
-          ./espup install --targets esp32
       - name: Build the bench firmware
         working-directory: targets/esp32-bench
         run: |
