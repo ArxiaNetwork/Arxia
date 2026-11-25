@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **`AccountChain::receive` verifies the incoming SEND**: the receiver now recomputes the hash and checks the signature of a SEND before crediting it, and leaves its state untouched on rejection. Before this, a SEND that nobody signed was credited. This proves the SEND is authentic, not that it is funded: that check belongs to a ledger holding the sender chain.
+- **Authentication at the receiving boundary**: `AccountChain::receive` authenticates the SEND itself (hash recomputed from content, strict signature check under the sending account) before any state changes, in addition to the ledger checks. Funding remains a ledger decision.
+- **Reconciliation authenticates its inputs**: `reconcile_partitions` verifies every block of both partitions before merging, where it previously required callers to pass authenticated blocks. A block that fails verification has no effect on the merge and is listed in the new `ReconciliationReport::rejected_blocks`.
 - **Bug 1: Double-receive prevention** ([#17](https://github.com/ArxiaNetwork/Arxia/pull/17)): track consumed SEND hashes per account to prevent a receiver from applying the same SEND block twice.
 - **Bug 2: Ed25519 signature verification in `add_block`** ([#12](https://github.com/ArxiaNetwork/Arxia/pull/12)): verify Ed25519 signatures on every insertion path, including gossip ingress, closing a missing check that allowed forged blocks to be accepted.
 - **Bug 3: Idempotent `AccountChain::open`** ([#13](https://github.com/ArxiaNetwork/Arxia/pull/13)): make `open` idempotent so that replaying an `OPEN` block on an already-opened chain is rejected cleanly instead of silently mutating state.

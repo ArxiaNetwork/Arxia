@@ -9,29 +9,38 @@
 use arxia_crdt::reconciliation::reconcile_partitions;
 use arxia_lattice::block::{Block, BlockType};
 use arxia_lattice::chain::{AccountChain, VectorClock};
+use ed25519_dalek::Signer;
 
-/// A raw RECEIVE citing `source_hash`. The merge path verifies neither
-/// signatures nor hashes — it operates on already-authenticated blocks —
-/// so this is representative of what a malicious peer contributes to a
-/// merge set.
-fn raw_receive(
-    account: &str,
+/// A RECEIVE citing `source_hash`, signed by `receiver`. The merge
+/// authenticates every block, so a repeat RECEIVE can only come from
+/// the holder of the receiving key; this is what such a holder
+/// contributes to a merge set when trying to be credited twice.
+fn signed_receive(
+    receiver: &AccountChain,
     previous: &str,
     nonce: u64,
     balance: u64,
     source_hash: &str,
 ) -> Block {
+    let block_type = BlockType::Receive {
+        source_hash: source_hash.to_string(),
+    };
+    let hash =
+        Block::compute_hash(receiver.id(), previous, &block_type, balance, nonce, 0).unwrap();
+    let signature = receiver
+        .signing_key()
+        .sign(&hex::decode(&hash).unwrap())
+        .to_bytes()
+        .to_vec();
     Block {
-        account: account.to_string(),
+        account: receiver.id().to_string(),
         previous: previous.to_string(),
-        block_type: BlockType::Receive {
-            source_hash: source_hash.to_string(),
-        },
+        block_type,
         balance,
         nonce,
         timestamp: 0,
-        hash: format!("{nonce:064x}"),
-        signature: vec![0u8; 64],
+        hash,
+        signature,
     }
 }
 
@@ -45,7 +54,7 @@ fn one_source_send_credits_at_most_once() {
 
     let send = alice.send(bob.id(), 100_000, &mut vc).unwrap();
     let recv1 = bob.receive(&send, &mut vc).unwrap();
-    let recv2 = raw_receive(bob.id(), &recv1.hash, 3, 200_000, &send.hash);
+    let recv2 = signed_receive(&bob, &recv1.hash, 3, 200_000, &send.hash);
 
     let partition = vec![
         alice.chain[0].clone(),
@@ -87,8 +96,8 @@ fn three_receives_of_one_source_still_credit_once() {
 
     let send = alice.send(bob.id(), 50_000, &mut vc).unwrap();
     let recv1 = bob.receive(&send, &mut vc).unwrap();
-    let recv2 = raw_receive(bob.id(), &recv1.hash, 3, 100_000, &send.hash);
-    let recv3 = raw_receive(bob.id(), &recv1.hash, 4, 150_000, &send.hash);
+    let recv2 = signed_receive(&bob, &recv1.hash, 3, 100_000, &send.hash);
+    let recv3 = signed_receive(&bob, &recv1.hash, 4, 150_000, &send.hash);
 
     let partition = vec![
         alice.chain[0].clone(),
