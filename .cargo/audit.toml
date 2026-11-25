@@ -1,0 +1,19 @@
+# cargo-audit configuration. Every ignored advisory has a written
+# rationale in docs/dependency-risks.md ; the two files move together.
+
+[advisories]
+ignore = [
+    # heapless 0.8.0, resolved only through the sequential-storage
+    # `_test` feature (host-side mock flash). Not part of any device
+    # build, and none of the affected types are used. See
+    # docs/dependency-risks.md, "heapless 0.8.0 advisories".
+    "RUSTSEC-2026-0574",
+    "RUSTSEC-2026-0575",
+    "RUSTSEC-2026-0576",
+    "RUSTSEC-2026-0577",
+    "RUSTSEC-2026-0578",
+    "RUSTSEC-2026-0579",
+    "RUSTSEC-2026-0580",
+    "RUSTSEC-2026-0581",
+    "RUSTSEC-2026-0582",
+]

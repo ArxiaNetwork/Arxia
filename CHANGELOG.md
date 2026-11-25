@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Dependency advisories**: `rustix` 1.1.4 to 1.1.6 (RUSTSEC-2026-0486). The nine `heapless` 0.8.0 advisories (RUSTSEC-2026-0574 to 0582) are ignored with a written rationale in `docs/dependency-risks.md`: the crate is resolved only for the host-side mock flash and none of the affected types is used. Routine updates: `rand` 0.10.4, `prost` and `prost-build` 0.14.6.
 - **Authentication at the receiving boundary**: `AccountChain::receive` authenticates the SEND itself (hash recomputed from content, strict signature check under the sending account) before any state changes, in addition to the ledger checks. Funding remains a ledger decision.
 - **Reconciliation authenticates its inputs**: `reconcile_partitions` verifies every block of both partitions before merging, where it previously required callers to pass authenticated blocks. A block that fails verification has no effect on the merge and is listed in the new `ReconciliationReport::rejected_blocks`.
 - **Bug 1: Double-receive prevention** ([#17](https://github.com/ArxiaNetwork/Arxia/pull/17)): track consumed SEND hashes per account to prevent a receiver from applying the same SEND block twice.

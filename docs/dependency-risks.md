@@ -12,10 +12,11 @@ document is the rationale. They cross-reference each other.
 
 > **Scope.** This document covers behaviour quirks that affect
 > the build chain, runtime initialisation, or transitive
-> dependency tree. It does NOT cover RustSec advisories
-> (handled by `[advisories]` in `deny.toml` with
-> `vulnerability = "deny"`) or license issues (handled by
-> `[licenses]`).
+> dependency tree. RustSec advisories are denied by default
+> (`cargo audit --deny warnings` in CI, `[advisories]` in
+> `deny.toml`) ; an advisory appears here only when it is
+> ignored, with the reason. License issues are handled by
+> `[licenses]`.
 
 ## zerocopy build-script PATH dependency
 
@@ -240,6 +241,59 @@ store 8.0.2 had modified and read every key back. Applying the
 same operations, both versions leave byte-identical images. The
 check used the in-memory mock with 1-byte words, and the images
 held no pending batch journal and no torn item.
+
+## heapless 0.8.0 advisories (host test harness only)
+
+### Affected version
+
+`heapless = 0.8.0`, advisories RUSTSEC-2026-0574 to
+RUSTSEC-2026-0582 (nine entries, all "unsound", patched in
+0.9.4).
+
+### Behaviour
+
+The advisories cover `FindMutView::pop`, `spsc` peek ordering,
+`IndexMap::truncate` and `IndexMap::insert`, `SortedLinkedList`
+zeroize, `Deque::try_from` and `Deque::make_contiguous`, the
+Treiber stack used by the pool types, and functions that drop
+generic elements while unwinding.
+
+`heapless 0.8.0` enters the lockfile through one path only :
+the `_test` feature of `sequential-storage`, which this
+workspace enables for the host-side mock flash used by the
+`arxia-storage-flash` and `arxia-flash-bench` tests. That
+feature pins the 0.8 line ; no released `sequential-storage`
+moves it to 0.9.
+
+### Workaround
+
+None needed. `cargo tree -p arxia-storage-flash -e normal`
+contains no `heapless` : the crate is absent from every device
+build and from every non-test host build.
+
+### Why we accept
+
+Inside `sequential-storage` the crate is used for
+`heapless::Vec` and `heapless::String` key and value
+conversions only. None of the affected types is reachable. The
+element type is `u8`, which has no `Drop`, so the unwinding
+advisory (RUSTSEC-2026-0577) has no path either. The code runs
+single-threaded, in tests, on the host.
+
+### Mechanical anchor
+
+`.cargo/audit.toml` lists the nine identifiers, each one
+explicitly. Any other advisory, including a new one against
+the same crate, still fails CI. The list is not self-expiring :
+removing it is part of the bump review below.
+
+### Regression detection
+
+At every `sequential-storage` bump review : rerun
+`cargo tree -p arxia-storage-flash -e normal` and confirm
+`heapless` is still absent, and check whether the `_test`
+feature moved to `heapless >= 0.9.4`. If it did, delete the
+ignore list and this entry in the same commit.
 
 ## sequential-storage "latest stable" MSRV policy
 
