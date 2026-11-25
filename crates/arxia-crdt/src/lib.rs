@@ -12,7 +12,7 @@ pub mod vector_clock;
 pub use or_set::ORSet;
 pub use pn_counter::PNCounter;
 pub use reconciliation::{
-    reconcile_partitions, reconcile_partitions_balances_only, ReconciliationReport,
+    reconcile_partitions, reconcile_partitions_balances_only, ReconciliationReport, RejectedBlock,
     RejectedReceive, ResolvedConflict,
 };
 pub use vector_clock::CrdtVectorClock;

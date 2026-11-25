@@ -2,6 +2,12 @@
 //!
 //! Invariants enforced:
 //!
+//! 0. Every block is authenticated before it is considered. A block
+//!    that fails [`arxia_lattice::validation::verify_block`] (hash
+//!    recomputed from content, strict signature check under the named
+//!    account) has no effect: it cannot credit, debit, win a conflict
+//!    or hide a genuine block. It is listed in
+//!    [`ReconciliationReport::rejected_blocks`] and the merge goes on.
 //! 1. At most one block per `(account, nonce)` contributes to the
 //!    reconciled state. When two partitions disagree, a deterministic
 //!    tie-break (lexicographically smallest hash) picks the winner, and
@@ -72,6 +78,22 @@ pub struct RejectedGenesis {
     pub reason: &'static str,
 }
 
+/// Info on a block that failed authentication and was therefore left
+/// out of the merge entirely: it did not credit, debit, or take part
+/// in any conflict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedBlock {
+    /// The account string the block named (attacker-controlled, may
+    /// be malformed).
+    pub account: String,
+    /// The nonce the block claimed.
+    pub nonce: u64,
+    /// The hash string the block carried (attacker-controlled).
+    pub block_hash: String,
+    /// The verification failure, as text.
+    pub reason: String,
+}
+
 /// Full outcome of a `reconcile_partitions` call.
 #[derive(Debug, Clone)]
 pub struct ReconciliationReport {
@@ -85,6 +107,9 @@ pub struct ReconciliationReport {
     /// `Open` blocks that claimed a non-genesis nonce and were
     /// therefore not applied. MED-016.
     pub rejected_genesis: Vec<RejectedGenesis>,
+    /// Blocks that failed hash or signature verification. They had no
+    /// effect on the merge.
+    pub rejected_blocks: Vec<RejectedBlock>,
 }
 
 /// Reconcile two partitions into merged balances via PNCounter CRDT.
@@ -99,11 +124,30 @@ pub fn reconcile_partitions(
     partition_a: &[Block],
     partition_b: &[Block],
 ) -> Result<ReconciliationReport, ArxiaError> {
+    // 0. Authenticate. Both partitions are untrusted input: a block
+    //    whose hash does not match its content, or whose signature does
+    //    not verify under the account it names, is set aside here and
+    //    takes no further part in the merge. This runs BEFORE the
+    //    dedup below, so that a forged block carrying the hash string
+    //    of a genuine one cannot shadow it.
+    let mut rejected_blocks: Vec<RejectedBlock> = Vec::new();
+    let mut authentic: Vec<&Block> = Vec::new();
+    for block in partition_a.iter().chain(partition_b.iter()) {
+        match arxia_lattice::validation::verify_block(block) {
+            Ok(()) => authentic.push(block),
+            Err(e) => rejected_blocks.push(RejectedBlock {
+                account: block.account.clone(),
+                nonce: block.nonce,
+                block_hash: block.hash.clone(),
+                reason: e.to_string(),
+            }),
+        }
+    }
+
     // 1. Deduplicate by block hash.
     let mut seen_hashes: HashSet<String> = HashSet::new();
-    let all: Vec<&Block> = partition_a
-        .iter()
-        .chain(partition_b.iter())
+    let all: Vec<&Block> = authentic
+        .into_iter()
         .filter(|b| seen_hashes.insert(b.hash.clone()))
         .collect();
 
@@ -279,6 +323,7 @@ pub fn reconcile_partitions(
         conflicts,
         rejected_receives,
         rejected_genesis,
+        rejected_blocks,
     })
 }
 
