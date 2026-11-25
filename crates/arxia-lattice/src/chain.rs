@@ -321,8 +321,20 @@ impl AccountChain {
 
     /// Receive funds from a SEND block.
     ///
+    /// The SEND is verified first: its stored hash must match its
+    /// content and its signature must verify under the account it
+    /// names. A receiver that skipped this would credit bytes anyone
+    /// can craft without a key, an account or a balance.
+    ///
+    /// This proves the SEND is authentic, not that it is funded.
+    /// Whether the sender owned the amount is decided by a ledger that
+    /// holds the sender's chain ([`crate::Ledger::add_block`]).
+    ///
     /// # Errors
     ///
+    /// - [`ArxiaError::HashMismatch`], [`ArxiaError::InvalidKey`] or
+    ///   [`ArxiaError::SignatureInvalid`] if `send_block` does not pass
+    ///   [`crate::verify_block`].
     /// - [`ArxiaError::NotSendBlock`] if `send_block` is not of type Send.
     /// - [`ArxiaError::WrongDestination`] if the send's destination is not
     ///   this account.
@@ -335,6 +347,10 @@ impl AccountChain {
         send_block: &Block,
         vclock: &mut VectorClock,
     ) -> Result<Block, ArxiaError> {
+        // Authenticate before anything else, and before any state
+        // changes: hash recomputed from content, strict signature
+        // check under the sending account.
+        crate::validation::verify_block(send_block)?;
         let amount = match &send_block.block_type {
             BlockType::Send {
                 amount,
@@ -1229,5 +1245,135 @@ mod tests {
             bob.short_id(),
             "two random pubkeys collide on first 8 hex chars (≈ 1 in 4 billion)"
         );
+    }
+
+    // ========================================================================
+    // Adversarial tests: receive must verify the incoming SEND
+    //
+    // A receiver that credits a SEND without checking its hash and
+    // signature accepts money from anyone able to craft bytes: no key,
+    // no account and no balance are needed. `receive` must run the
+    // same `verify_block` every other acceptance path runs, before any
+    // state changes.
+    // ========================================================================
+
+    /// A SEND to `destination` that nobody signed.
+    fn forged_send(destination: &str, amount: u64) -> Block {
+        Block {
+            account: "not-even-hex".to_string(),
+            previous: "whatever".to_string(),
+            block_type: BlockType::Send {
+                destination: destination.to_string(),
+                amount,
+            },
+            balance: 0,
+            nonce: 99,
+            timestamp: 0,
+            hash: "garbage".to_string(),
+            signature: vec![],
+        }
+    }
+
+    #[test]
+    fn test_receive_rejects_unsigned_forged_send() {
+        let mut vc = VectorClock::new();
+        let mut bob = AccountChain::new();
+        bob.open(0, &mut vc).unwrap();
+        let pre_chain_len = bob.chain.len();
+        let pre_nonce = bob.nonce;
+        let pre_vc = vc.clocks.clone();
+
+        let fake = forged_send(bob.id(), 50_000_000);
+        let result = bob.receive(&fake, &mut vc);
+
+        assert!(
+            result.is_err(),
+            "a SEND with no valid hash or signature must not be credited"
+        );
+        assert_eq!(bob.balance, 0, "balance must be untouched");
+        assert_eq!(bob.nonce, pre_nonce, "nonce must be untouched");
+        assert_eq!(bob.chain.len(), pre_chain_len, "chain must be untouched");
+        assert_eq!(vc.clocks, pre_vc, "vclock must not tick on rejection");
+    }
+
+    #[test]
+    fn test_receive_rejects_send_with_tampered_amount() {
+        // Alice signs a SEND of 100. Someone on the path raises the
+        // amount. The stored hash no longer matches the content.
+        let mut vc = VectorClock::new();
+        let mut alice = AccountChain::new();
+        let mut bob = AccountChain::new();
+        alice.open(1_000_000, &mut vc).unwrap();
+        bob.open(0, &mut vc).unwrap();
+        let mut send = alice.send(bob.id(), 100, &mut vc).unwrap();
+        send.block_type = BlockType::Send {
+            destination: bob.id().to_string(),
+            amount: 900_000,
+        };
+        assert!(matches!(
+            bob.receive(&send, &mut vc),
+            Err(ArxiaError::HashMismatch)
+        ));
+        assert_eq!(bob.balance, 0);
+    }
+
+    #[test]
+    fn test_receive_rejects_send_signed_by_another_key() {
+        // Mallory rebuilds Alice's SEND with a larger amount, computes
+        // a correct hash for it, and signs with her own key while
+        // keeping Alice's account in the block.
+        let mut vc = VectorClock::new();
+        let mut alice = AccountChain::new();
+        let mallory = AccountChain::new();
+        let mut bob = AccountChain::new();
+        alice.open(1_000_000, &mut vc).unwrap();
+        bob.open(0, &mut vc).unwrap();
+        let genuine = alice.send(bob.id(), 100, &mut vc).unwrap();
+        let block_type = BlockType::Send {
+            destination: bob.id().to_string(),
+            amount: 900_000,
+        };
+        let hash = Block::compute_hash(
+            &genuine.account,
+            &genuine.previous,
+            &block_type,
+            genuine.balance,
+            genuine.nonce,
+            genuine.timestamp,
+        )
+        .unwrap();
+        let signature = mallory
+            .signing_key()
+            .sign(&hex::decode(&hash).unwrap())
+            .to_bytes()
+            .to_vec();
+        let forged = Block {
+            block_type,
+            hash,
+            signature,
+            ..genuine
+        };
+        assert!(matches!(
+            bob.receive(&forged, &mut vc),
+            Err(ArxiaError::SignatureInvalid { .. })
+        ));
+        assert_eq!(bob.balance, 0);
+    }
+
+    #[test]
+    fn test_receive_rejected_forgery_does_not_block_the_genuine_send() {
+        // A rejected forgery must not consume anything: the genuine
+        // SEND is still receivable afterwards.
+        let mut vc = VectorClock::new();
+        let mut alice = AccountChain::new();
+        let mut bob = AccountChain::new();
+        alice.open(1_000_000, &mut vc).unwrap();
+        bob.open(0, &mut vc).unwrap();
+        let send = alice.send(bob.id(), 100, &mut vc).unwrap();
+        let mut tampered = send.clone();
+        tampered.signature = vec![0u8; 64];
+        assert!(bob.receive(&tampered, &mut vc).is_err());
+        bob.receive(&send, &mut vc).expect("genuine send");
+        assert_eq!(bob.balance, 100);
     }
 }
