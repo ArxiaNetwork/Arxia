@@ -190,6 +190,7 @@ dependencies = [
  "arxia-core",
  "arxia-crypto",
  "arxia-storage",
+ "arxia-storage-flash",
  "arxia-storage-redb",
  "blake3",
  "ed25519-dalek",
