@@ -180,8 +180,10 @@ Other members of the workspace:
 
 - `bin/arxia-node`: node binary (stub).
 - `tools/arxia-cli`: key and DID generation. `tools/arxia-inspector`: stub.
-- `examples/`: four example programs (`offline_payment`, `did_issuance`,
-  `mesh_relay`, `partition_reconciliation`).
+- `examples/`: five example programs (`offline_payment`, `offline_settlement`,
+  `did_issuance`, `mesh_relay`, `partition_reconciliation`).
+  `offline_settlement` settles payments between separate processes that
+  exchange only files of frames.
 - `contracts/`: two example contract crates (`escrow`, `token-lock`). There
   is no contract runtime.
 - `targets/esp32`: ESP32 target crate (`no_std`, radio driver not written

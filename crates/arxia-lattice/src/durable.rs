@@ -231,6 +231,25 @@ impl<S: StorageBackend> DurableWallet<S> {
         self.wallet.chain()
     }
 
+    /// Every block on storage, in the order the blocks were accepted.
+    /// Replaying them in this order satisfies the ledger rules.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageFault::RecordUndecodable`] for a record that does not
+    /// decode, or any backend error.
+    pub fn history(&self) -> Result<Vec<Block>, ArxiaError> {
+        let mut records: Vec<Vec<u8>> = Vec::new();
+        self.storage.scan_prefix(BLOCK_PREFIX, &mut |_key, value| {
+            records.push(value.to_vec());
+            true
+        })?;
+        records
+            .iter()
+            .map(|record| from_compact_bytes(record).map_err(|_| undecodable()))
+            .collect()
+    }
+
     /// Give the storage backend back, for example to reopen it.
     pub fn into_storage(self) -> S {
         self.storage
