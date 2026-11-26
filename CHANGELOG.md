@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Equivocation proofs (`arxia_lattice::equivocation`): two authentic blocks for one account position form an `EquivocationProof` that any node can verify and pass on. A wallet that sees both blocks keeps the proof automatically. A ledger holding a proof freezes the account from that position: nothing new is accepted from it there or after, and its unsettled SENDs in that range can no longer be received, while its earlier blocks stay acceptable. `DurableWallet` stores proofs.
+
 - Witnesses (`arxia_finality::witness`): a `Witness` confirms a block only when its own durable ledger accepts it, so it never confirms two blocks for the same account position, including across a restart. A receiver counts confirmations with `assess` under a `WitnessRoster`; a payment is final when the confirming weight is more than two thirds of the roster total, and `receive_final` credits only final payments. The decision takes nothing from the caller but the roster.
 
 - Issuance policy (`arxia_lattice::issuance`): a ledger built with `Ledger::with_issuance` accepts a non-zero opening balance only for an account and an amount covered by an `IssuanceCertificate` signed by enough of the policy issuer keys. Certificates are self-contained, travel with payments, and fit the flash value limit. `Wallet` and `DurableWallet` gain the matching constructors, `open_certified` and `ingest_issuance`. `Ledger::new` keeps its behaviour for simulations and tests.

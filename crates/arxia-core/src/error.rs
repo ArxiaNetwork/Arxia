@@ -206,6 +206,14 @@ pub enum ArxiaError {
         fault: StorageFault,
     },
 
+    /// An equivocation proof was refused, or an account is frozen by
+    /// one.
+    #[error("equivocation: {fault}")]
+    Equivocation {
+        /// The specific equivocation fault.
+        fault: EquivocationFault,
+    },
+
     /// A witness roster or confirmation set was refused.
     #[error("witness error: {fault}")]
     Witness {
@@ -468,6 +476,25 @@ pub enum DidFault {
         /// The byte count the DID scheme requires.
         expected: usize,
     },
+}
+
+/// The specific fault behind an [`ArxiaError::Equivocation`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum EquivocationFault {
+    /// The two blocks are not for the same account and position, or
+    /// are the same block.
+    #[error("the two blocks do not conflict")]
+    NotAConflict,
+    /// The account signed two blocks for one position; the ledger
+    /// accepts nothing from it at that position or after.
+    #[error("the account is frozen from position {from_nonce}")]
+    AccountFrozen {
+        /// First frozen account position.
+        from_nonce: u64,
+    },
+    /// The bytes do not decode into two compact blocks.
+    #[error("the proof could not be decoded")]
+    Undecodable,
 }
 
 /// The specific fault behind an [`ArxiaError::Witness`].
