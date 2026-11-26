@@ -282,6 +282,11 @@ impl Ledger {
         self.issuance.as_ref()
     }
 
+    /// Every issuance certificate this ledger holds.
+    pub fn issuances(&self) -> impl Iterator<Item = &IssuanceCertificate> {
+        self.certificates.values()
+    }
+
     /// The verified certificate held for `account`, if any.
     pub fn issuance_for(&self, account: &str) -> Option<&IssuanceCertificate> {
         self.certificates.get(account)

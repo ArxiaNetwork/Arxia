@@ -214,6 +214,13 @@ pub enum ArxiaError {
         fault: EquivocationFault,
     },
 
+    /// A bundle of frames could not be decoded or used.
+    #[error("bundle error: {fault}")]
+    Bundle {
+        /// The specific bundle fault.
+        fault: BundleFault,
+    },
+
     /// A reserve certificate was refused.
     #[error("reserve error: {fault}")]
     Reserve {
@@ -502,6 +509,26 @@ pub enum EquivocationFault {
     /// The bytes do not decode into two compact blocks.
     #[error("the proof could not be decoded")]
     Undecodable,
+}
+
+/// The specific fault behind an [`ArxiaError::Bundle`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum BundleFault {
+    /// The bytes end inside a frame.
+    #[error("the bundle ends inside a frame")]
+    Truncated,
+    /// A frame carries a tag this version does not know.
+    #[error("unknown frame tag")]
+    UnknownTag,
+    /// A frame payload does not decode into the item its tag names.
+    #[error("a frame payload could not be decoded")]
+    Payload,
+    /// An item is too long to fit one frame.
+    #[error("the item does not fit one frame")]
+    TooLong,
+    /// The bundle does not carry exactly one payment block.
+    #[error("the bundle must carry exactly one payment")]
+    PaymentCount,
 }
 
 /// The specific fault behind an [`ArxiaError::Reserve`].

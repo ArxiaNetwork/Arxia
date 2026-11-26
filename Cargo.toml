@@ -25,6 +25,7 @@ members = [
     "tools/arxia-cli",
     "tools/arxia-inspector",
     "examples/offline_payment",
+    "examples/offline_settlement",
     "examples/mesh_relay",
     "examples/did_issuance",
     "examples/partition_reconciliation",

@@ -1,0 +1,21 @@
+[package]
+name = "offline_settlement"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Example: payments settled between separate processes, with witnesses and no network"
+authors = []
+
+[dependencies]
+arxia-core = { path = "../../crates/arxia-core" }
+arxia-finality = { path = "../../crates/arxia-finality" }
+arxia-lattice = { path = "../../crates/arxia-lattice" }
+arxia-storage-redb = { path = "../../crates/arxia-storage-redb" }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

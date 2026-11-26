@@ -7,6 +7,7 @@
 #![warn(missing_docs)]
 
 pub mod block;
+pub mod bundle;
 pub mod chain;
 pub mod durable;
 pub mod equivocation;
