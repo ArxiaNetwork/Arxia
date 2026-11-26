@@ -35,6 +35,7 @@ use std::collections::HashSet;
 
 use crate::block::Block;
 use crate::chain::{AccountChain, VectorClock};
+use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::ledger::Ledger;
 use crate::validation::verify_block;
 use arxia_core::ArxiaError;
@@ -66,6 +67,16 @@ impl Wallet {
         }
     }
 
+    /// Create a wallet with a fresh keypair and an empty ledger under
+    /// an issuance policy. See [`crate::issuance`].
+    pub fn with_issuance(policy: IssuancePolicy) -> Self {
+        Self {
+            account: AccountChain::new(),
+            ledger: Ledger::with_issuance(policy),
+            vclock: VectorClock::new(),
+        }
+    }
+
     /// Rebuild a wallet from its signing seed and the blocks it had
     /// accepted, in acceptance order. Every block goes through the
     /// ledger rules again; the account state is then taken from the
@@ -79,7 +90,34 @@ impl Wallet {
         seed: &[u8; 32],
         blocks: impl IntoIterator<Item = Block>,
     ) -> Result<Self, ArxiaError> {
-        let mut ledger = Ledger::new();
+        Self::replay(seed, Ledger::new(), blocks)
+    }
+
+    /// As [`Wallet::restore`], under an issuance policy. The
+    /// certificates are verified and added before the blocks are
+    /// replayed.
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Ledger::add_issuance`] or [`Ledger::add_block`].
+    pub fn restore_with_issuance(
+        seed: &[u8; 32],
+        policy: IssuancePolicy,
+        certificates: &[IssuanceCertificate],
+        blocks: impl IntoIterator<Item = Block>,
+    ) -> Result<Self, ArxiaError> {
+        let mut ledger = Ledger::with_issuance(policy);
+        for certificate in certificates {
+            ledger.add_issuance(certificate)?;
+        }
+        Self::replay(seed, ledger, blocks)
+    }
+
+    fn replay(
+        seed: &[u8; 32],
+        mut ledger: Ledger,
+        blocks: impl IntoIterator<Item = Block>,
+    ) -> Result<Self, ArxiaError> {
         for block in blocks {
             ledger.add_block(block)?;
         }
@@ -139,6 +177,37 @@ impl Wallet {
     /// Any error of [`AccountChain::send`] or [`Ledger::add_block`].
     pub fn send(&mut self, destination: &str, amount: u64) -> Result<Block, ArxiaError> {
         self.apply_own(|account, vclock| account.send(destination, amount, vclock))
+    }
+
+    /// Open the account with the balance a certificate states. The
+    /// certificate is verified and kept first.
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Ledger::add_issuance`] or [`Wallet::open`].
+    pub fn open_certified(
+        &mut self,
+        certificate: &IssuanceCertificate,
+    ) -> Result<Block, ArxiaError> {
+        self.ledger.add_issuance(certificate)?;
+        self.open(certificate.amount())
+    }
+
+    /// Accept an issuance certificate from another device, so that the
+    /// account it covers can be replayed. See
+    /// [`Ledger::add_issuance`].
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Ledger::add_issuance`].
+    pub fn ingest_issuance(&mut self, certificate: &IssuanceCertificate) -> Result<(), ArxiaError> {
+        self.ledger.add_issuance(certificate)
+    }
+
+    /// The certificate of this wallet's own account, to hand over
+    /// together with [`Wallet::chain`].
+    pub fn issuance(&self) -> Option<&IssuanceCertificate> {
+        self.ledger.issuance_for(self.account.id())
     }
 
     /// Accept a block from another device under the full ledger rules.

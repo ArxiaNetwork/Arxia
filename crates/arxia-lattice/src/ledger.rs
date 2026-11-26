@@ -69,8 +69,9 @@
 //! rejected block never pollutes them.
 
 use crate::block::{Block, BlockType};
+use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::validation::verify_block;
-use arxia_core::{ArxiaError, GenesisRule};
+use arxia_core::{ArxiaError, GenesisRule, IssuanceFault};
 use std::collections::{HashMap, HashSet};
 
 /// Compact summary of an accepted `Send` block, kept in
@@ -106,17 +107,76 @@ pub struct Ledger {
     /// is accepted, so the ledger refuses to mint past the
     /// protocol-wide ceiling. See module docstring.
     total_supply: u64,
+    /// Issuer keys and threshold, when the ledger restricts who may
+    /// open an account with a balance. See [`crate::issuance`].
+    issuance: Option<IssuancePolicy>,
+    /// Verified certificates, by account.
+    certificates: HashMap<String, IssuanceCertificate>,
 }
 
 impl Ledger {
-    /// Create a new empty ledger.
+    /// Create a new empty ledger with no issuance policy: any account
+    /// may open with a balance, within the supply ceilings. This is
+    /// the mode for simulations and tests; a deployed ledger is built
+    /// with [`Ledger::with_issuance`].
     pub fn new() -> Self {
         Self {
             chains: HashMap::new(),
             send_index: HashMap::new(),
             consumed_sends: HashSet::new(),
             total_supply: 0,
+            issuance: None,
+            certificates: HashMap::new(),
         }
+    }
+
+    /// Create a new empty ledger under an issuance policy: an `Open`
+    /// with a non-zero balance is accepted only for an account and an
+    /// amount covered by a certificate added through
+    /// [`Ledger::add_issuance`].
+    pub fn with_issuance(policy: IssuancePolicy) -> Self {
+        Self {
+            issuance: Some(policy),
+            ..Self::new()
+        }
+    }
+
+    /// The issuance policy, if the ledger has one.
+    pub fn issuance_policy(&self) -> Option<&IssuancePolicy> {
+        self.issuance.as_ref()
+    }
+
+    /// The verified certificate held for `account`, if any.
+    pub fn issuance_for(&self, account: &str) -> Option<&IssuanceCertificate> {
+        self.certificates.get(account)
+    }
+
+    /// Verify a certificate against the policy and keep it. Adding the
+    /// same certificate again has no effect. A ledger without a policy
+    /// accepts and ignores certificates.
+    ///
+    /// # Errors
+    ///
+    /// - [`IssuanceFault::InsufficientSignatures`] if the certificate
+    ///   does not meet the policy.
+    /// - [`IssuanceFault::ConflictingCertificate`] if a certificate
+    ///   with a different amount is already held for the account.
+    pub fn add_issuance(&mut self, certificate: &IssuanceCertificate) -> Result<(), ArxiaError> {
+        let Some(policy) = &self.issuance else {
+            return Ok(());
+        };
+        policy.verify(certificate)?;
+        let account = certificate.account();
+        if let Some(held) = self.certificates.get(&account) {
+            if held.amount() != certificate.amount() {
+                return Err(ArxiaError::Issuance {
+                    fault: IssuanceFault::ConflictingCertificate,
+                });
+            }
+            return Ok(());
+        }
+        self.certificates.insert(account, certificate.clone());
+        Ok(())
     }
 
     /// Read-only access to the running total supply (sum of every
@@ -180,6 +240,25 @@ impl Ledger {
                     requested: projected,
                     max: arxia_core::TOTAL_SUPPLY_MICRO_ARX,
                 });
+            }
+            // Under an issuance policy, a balance exists only if the
+            // issuers certified this account for this exact amount.
+            if self.issuance.is_some() && *initial_balance > 0 {
+                let certified = self
+                    .certificates
+                    .get(&block.account)
+                    .ok_or(ArxiaError::Issuance {
+                        fault: IssuanceFault::MissingCertificate,
+                    })?
+                    .amount();
+                if certified != *initial_balance {
+                    return Err(ArxiaError::Issuance {
+                        fault: IssuanceFault::AmountMismatch {
+                            certified,
+                            opened: *initial_balance,
+                        },
+                    });
+                }
             }
         }
 
