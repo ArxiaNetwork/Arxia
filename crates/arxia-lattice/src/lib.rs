@@ -11,9 +11,11 @@ pub mod chain;
 pub mod ledger;
 pub mod serialization;
 pub mod validation;
+pub mod wallet;
 
 pub use block::{Block, BlockType};
 pub use chain::{AccountChain, VectorClock};
 pub use ledger::Ledger;
 pub use serialization::{from_compact_bytes, to_compact_bytes};
 pub use validation::{verify_block, verify_chain_integrity};
+pub use wallet::Wallet;

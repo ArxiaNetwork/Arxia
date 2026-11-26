@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `arxia_lattice::Wallet`: an account together with the ledger that validates it. Blocks from another device enter through `Wallet::ingest` under the full ledger rules, and `Wallet::receive` credits a payment only when the receiver has replayed its funding. Every operation updates account and ledger together or leaves both untouched.
+
 - CI badge, Meshtastic disclaimer, and repository history note in `README.md` ([#22](https://github.com/ArxiaNetwork/Arxia/pull/22)).
 - First transaction between two T-Beam boards over LoRa radio with no internet in the loop (`2026-04-18`). It ran through a bridge, not through the node binary in this repository.
 
