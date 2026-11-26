@@ -555,6 +555,10 @@ pub enum ReserveFault {
     /// reserve account.
     #[error("a different certificate exists for this reserve account")]
     Conflict,
+    /// There is no reserve, or the witnesses have not certified it
+    /// yet.
+    #[error("no certified reserve")]
+    NotCertified,
     /// The records do not decode into a certificate.
     #[error("the certificate could not be decoded")]
     Undecodable,
