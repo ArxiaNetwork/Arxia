@@ -36,8 +36,12 @@
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
 
 pub mod reassembly;
+#[cfg(feature = "std")]
 pub mod sim;
 pub mod traits;
 
@@ -45,6 +49,7 @@ pub use reassembly::{
     fragment, Fragment, FragmentHeader, Reassembler, ReassemblyError, FRAGMENT_DOMAIN,
     FRAGMENT_HEADER_LEN, MAX_INFLIGHT_MESSAGES_PER_PEER,
 };
+#[cfg(feature = "std")]
 pub use sim::simulated::{SimulatedTransport, DEFAULT_INBOX_CAPACITY, DEFAULT_OUTBOX_CAPACITY};
 pub use traits::{
     SignedTransportMessage, TransportError, TransportMessage, TransportTrait,

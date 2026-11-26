@@ -1,5 +1,7 @@
 //! Transport trait definition.
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use arxia_core::{ArxiaError, TransportFault};
 use core::time::Duration;
 
@@ -233,8 +235,8 @@ pub enum TransportError {
     },
 }
 
-impl std::fmt::Display for TransportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TransportError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::PayloadTooLarge { size, max } => {
                 write!(f, "payload too large: {} > {}", size, max)
@@ -268,7 +270,7 @@ impl std::fmt::Display for TransportError {
     }
 }
 
-impl std::error::Error for TransportError {}
+impl core::error::Error for TransportError {}
 
 impl From<TransportError> for ArxiaError {
     fn from(e: TransportError) -> Self {

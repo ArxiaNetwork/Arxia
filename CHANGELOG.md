@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The witness node and the transport layer build without the standard library. `Witness` and `receive_final` now live in `arxia_lattice::witness` (still re-exported from `arxia_finality::witness`), and `arxia-transport` gains a default `std` feature that holds only the simulated link. Both crates join the bare-metal gate in CI.
 - `arxia-lattice` builds without the standard library (`--no-default-features`, `no_std` with `alloc`) and joins the bare-metal gate in CI. Key generation from OS entropy and the wall clock sit behind the default `std` feature; a device uses `AccountChain::from_seed`, `Wallet::from_seed`, `DurableWallet::open_with_entropy` and `set_clock`. Maps and sets are ordered on every target, which changes the type of `Ledger::chains` and `AccountChain::consumed_sources`.
 - Transport: `arxia_transport::fragment` splits a message into signed fragments that each fit one MTU, and `Fragment::to_bytes` / `from_bytes` define their wire encoding, completing the sending side of the existing reassembly. A bundle of any size now crosses a link as packets of at most one MTU; tests settle a payment across the simulated radio link with reordered, repeated and lost packets.
 

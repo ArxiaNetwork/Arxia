@@ -64,7 +64,9 @@
 //! (drop-oldest), with the eviction count observable via
 //! [`Reassembler::evicted_count`].
 
-use std::collections::{HashMap, VecDeque};
+use alloc::collections::{BTreeMap, VecDeque};
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// Maximum number of concurrent in-flight messages per peer
 /// before the reassembler starts evicting the oldest.
@@ -127,8 +129,8 @@ pub enum ReassemblyError {
     },
 }
 
-impl std::fmt::Display for ReassemblyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ReassemblyError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidSignature => f.write_str("fragment signature does not verify"),
             Self::TotalMismatch { got, expected } => write!(
@@ -154,7 +156,7 @@ impl std::fmt::Display for ReassemblyError {
     }
 }
 
-impl std::error::Error for ReassemblyError {}
+impl core::error::Error for ReassemblyError {}
 
 /// Per-fragment header. Bound to the payload via the signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -331,7 +333,7 @@ struct PendingMessage {
 pub struct Reassembler {
     /// Per-peer FIFO of (message_id → PendingMessage). FIFO
     /// order lets us drop-oldest on overflow per peer.
-    peers: HashMap<[u8; 32], VecDeque<([u8; 16], PendingMessage)>>,
+    peers: BTreeMap<[u8; 32], VecDeque<([u8; 16], PendingMessage)>>,
     /// Cumulative count of pending messages evicted to make
     /// room for new ones. Saturates at u64::MAX.
     evicted: u64,

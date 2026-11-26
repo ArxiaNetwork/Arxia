@@ -1,11 +1,10 @@
 //! Witness confirmations and how a receiver counts them.
 //!
 //! A witness is a node that keeps a ledger and signs a confirmation
-//! for a block only when its own ledger accepts it (the node itself is
-//! `arxia_finality::witness::Witness`). This module holds the part
-//! that needs no storage: the roster of recognised witnesses, the
-//! signed confirmation, and the count that decides whether a block is
-//! final.
+//! for a block only when its own ledger accepts it: [`Witness`]. This
+//! module also holds the roster of recognised witnesses, the signed
+//! confirmation, the count that decides whether a block is final,
+//! and [`receive_final`], which credits only final payments.
 //!
 //! [`assess`] counts the weight of the roster witnesses that confirmed
 //! exactly this block. A block is final when that weight is more than
@@ -30,8 +29,11 @@ use alloc::{
 };
 
 use crate::block::Block;
+use crate::durable::DurableWallet;
+use crate::issuance::IssuanceCertificate;
 use crate::validation::verify_block;
 use arxia_core::{ArxiaError, WitnessFault};
+use arxia_storage::StorageBackend;
 use ed25519_dalek::SigningKey;
 
 /// Domain prefix of the message a witness signs.
@@ -270,4 +272,96 @@ pub fn assess(
         total_weight: roster.total_weight(),
         witnesses: counted.len(),
     })
+}
+
+/// A node that confirms blocks its own ledger accepts.
+pub struct Witness<S: StorageBackend> {
+    wallet: DurableWallet<S>,
+    key: SigningKey,
+}
+
+impl<S: StorageBackend> Witness<S> {
+    /// Run a witness on top of a durable wallet. The witness signs
+    /// with the wallet's account key, and its ledger is the wallet's.
+    pub fn new(wallet: DurableWallet<S>) -> Self {
+        let key = SigningKey::from_bytes(&wallet.wallet().seed());
+        Self { wallet, key }
+    }
+
+    /// Public key of the witness.
+    pub fn public_key(&self) -> [u8; 32] {
+        self.key.verifying_key().to_bytes()
+    }
+
+    /// Give the wallet back, for example to restart the witness.
+    pub fn into_wallet(self) -> DurableWallet<S> {
+        self.wallet
+    }
+
+    /// Accept an issuance certificate, as
+    /// [`DurableWallet::ingest_issuance`].
+    ///
+    /// # Errors
+    ///
+    /// As [`DurableWallet::ingest_issuance`].
+    pub fn ingest_issuance(&mut self, certificate: &IssuanceCertificate) -> Result<(), ArxiaError> {
+        self.wallet.ingest_issuance(certificate)
+    }
+
+    /// Accept the blocks that lead up to a payment, as
+    /// [`DurableWallet::ingest_all`].
+    ///
+    /// # Errors
+    ///
+    /// As [`DurableWallet::ingest_all`].
+    pub fn ingest_all(&mut self, blocks: &[Block]) -> Result<(), ArxiaError> {
+        self.wallet.ingest_all(blocks)
+    }
+
+    /// Confirm `block`, if this witness's ledger accepts it.
+    ///
+    /// The block is stored before the confirmation is signed.
+    /// Confirming a block already held returns the same confirmation
+    /// again.
+    ///
+    /// # Errors
+    ///
+    /// - [`ArxiaError::NonceConflict`] if the ledger holds a different
+    ///   block at that account position.
+    /// - Any other error of [`DurableWallet::ingest`]: the block is
+    ///   not authentic, not in sequence, not funded.
+    pub fn confirm(&mut self, block: &Block) -> Result<WitnessConfirmation, ArxiaError> {
+        self.wallet.ingest(block)?;
+        WitnessConfirmation::sign(&self.key, block)
+    }
+}
+
+/// Credit a payment only if it is final under `roster`.
+///
+/// # Errors
+///
+/// - [`WitnessFault::NotFinal`] if the confirmed weight is not more
+///   than two thirds of the roster total. The wallet is untouched.
+/// - Any error of [`assess`] or [`DurableWallet::receive`].
+pub fn receive_final<S: StorageBackend>(
+    wallet: &mut DurableWallet<S>,
+    send_block: &Block,
+    confirmations: &[WitnessConfirmation],
+    roster: &WitnessRoster,
+) -> Result<Block, ArxiaError> {
+    let settlement = assess(send_block, confirmations, roster)?;
+    if !settlement.is_final() {
+        return Err(fault(WitnessFault::NotFinal {
+            confirmed: settlement.confirmed_weight,
+            total: settlement.total_weight,
+        }));
+    }
+    // Keep the confirmations with the block, so that the payment stays
+    // acceptable, and can be shown to be final, if the payer is later
+    // found to have signed another block for the same position.
+    if wallet.wallet().ledger().witness_roster().is_some() {
+        wallet.ingest(send_block)?;
+        wallet.ingest_settlement(send_block, confirmations)?;
+    }
+    wallet.receive(send_block)
 }

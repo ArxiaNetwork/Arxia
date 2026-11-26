@@ -7,9 +7,20 @@ license.workspace = true
 description = "Transport layer abstraction for Arxia: trait, signed messages, fragment reassembly and a simulated link (radio drivers not yet implemented)"
 authors = []
 
+# Declared directly rather than workspace-inherited so default
+# features can be turned off (cargo ignores that override on inherited
+# dependencies). Versions match the workspace pins.
 [dependencies]
-arxia-core = { path = "../arxia-core" }
-arxia-crypto = { path = "../arxia-crypto" }
-ed25519-dalek = { workspace = true }
-hex = { workspace = true }
-rand = { workspace = true }
+arxia-core = { path = "../arxia-core", default-features = false }
+arxia-crypto = { path = "../arxia-crypto", default-features = false }
+ed25519-dalek = { version = "3.0", default-features = false, features = ["fast", "zeroize"] }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+rand = { version = "0.10.2", optional = true }
+
+[features]
+# std (default) adds the simulated link used in tests and the
+# wall-clock freshness check. Without it the crate keeps the transport
+# trait, signed messages, and fragment splitting and reassembly.
+default = ["std"]
+std = ["arxia-core/std", "arxia-crypto/std", "hex/std", "dep:rand"]
+
