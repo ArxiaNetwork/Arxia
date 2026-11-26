@@ -389,3 +389,164 @@ fn a_device_without_a_roster_cannot_go_on_the_air() {
     let wallet = DurableWallet::open(MemoryStorage::default()).unwrap();
     assert!(Device::new(wallet, 3).is_err());
 }
+
+/// Give the device at `index` a reserve account on its own storage.
+fn add_reserve(world: &mut World, index: usize, seed: u8) {
+    let mut reserve =
+        DurableWallet::open_with_entropy(MemoryStorage::default(), world.config.clone(), || {
+            [seed; 32]
+        })
+        .unwrap();
+    reserve.open_account(0).unwrap();
+    let device = world.devices.remove(index);
+    world.devices.insert(index, device.with_reserve(reserve));
+}
+
+/// Run until the device at `index` reports its reserve certified.
+fn run_until_certified(world: &mut World, index: usize) {
+    for _ in 0..80 {
+        world.step();
+        if world.happened(index, |e| matches!(e, Event::ReserveCertified { .. })) {
+            return;
+        }
+    }
+    panic!("the reserve was not certified");
+}
+
+/// Move packets between two devices only: everyone else is out of
+/// reach.
+fn alone_together(world: &mut World, a: usize, b: usize, steps: usize) {
+    for _ in 0..steps {
+        for (from, to) in [(a, b), (b, a)] {
+            let mut packets = Vec::new();
+            while let Some(packet) = world.devices[from].next_packet() {
+                packets.push(packet);
+            }
+            for packet in &packets {
+                assert!(packet.len() <= RADIO_MTU);
+                world.devices[to].handle_packet(packet);
+            }
+            while let Some(event) = world.devices[from].next_event() {
+                world.events.push((from, event));
+            }
+        }
+        world.devices[a].tick();
+        world.devices[b].tick();
+    }
+}
+
+#[test]
+fn a_reserve_is_certified_then_pays_with_no_witness_in_reach() {
+    let mut world = World::new(0);
+    let alice = world.join(1, Some(100 * ARX));
+    let bob = world.join(2, None);
+    add_reserve(&mut world, alice, 11);
+
+    // With the witnesses in reach, Alice sets 20 aside.
+    world.devices[alice].fund_reserve(20 * ARX).unwrap();
+    run_until_certified(&mut world, alice);
+    assert_eq!(world.devices[alice].balance(), 80 * ARX);
+    assert_eq!(world.devices[alice].reserve().unwrap().balance(), 20 * ARX);
+    assert_eq!(
+        world.devices[alice]
+            .reserve_certificate()
+            .map(|certificate| certificate.amount()),
+        Some(20 * ARX)
+    );
+
+    // Later, Alice and Bob are alone. Bob has never heard of Alice.
+    let to = world.id(bob);
+    world.devices[alice].pay_from_reserve(&to, 5 * ARX).unwrap();
+    alone_together(&mut world, alice, bob, 6);
+
+    assert_eq!(world.devices[bob].balance(), 5 * ARX);
+    assert_eq!(world.devices[alice].reserve().unwrap().balance(), 15 * ARX);
+    assert!(world.happened(bob, |e| matches!(e, Event::ReceivedFromReserve { .. })));
+    assert!(world.happened(alice, |e| matches!(e, Event::Delivered { .. })));
+    assert_eq!(world.devices[alice].in_flight(), 0);
+
+    // A second payment from the same reserve follows the first.
+    world.devices[alice]
+        .pay_from_reserve(&to, 10 * ARX)
+        .unwrap();
+    alone_together(&mut world, alice, bob, 6);
+    assert_eq!(world.devices[bob].balance(), 15 * ARX);
+}
+
+#[test]
+fn a_reserve_cannot_pay_more_than_it_holds() {
+    let mut world = World::new(0);
+    let alice = world.join(1, Some(100 * ARX));
+    let bob = world.join(2, None);
+    add_reserve(&mut world, alice, 11);
+    world.devices[alice].fund_reserve(20 * ARX).unwrap();
+    run_until_certified(&mut world, alice);
+
+    let to = world.id(bob);
+    assert!(world.devices[alice]
+        .pay_from_reserve(&to, 21 * ARX)
+        .is_err());
+    assert_eq!(world.devices[alice].in_flight(), 0);
+}
+
+#[test]
+fn a_receiver_can_decline_reserve_payments() {
+    let mut world = World::new(0);
+    let alice = world.join(1, Some(100 * ARX));
+    let bob = world.join(2, None);
+    add_reserve(&mut world, alice, 11);
+    world.devices[alice].fund_reserve(20 * ARX).unwrap();
+    run_until_certified(&mut world, alice);
+
+    world.devices[bob].set_accept_reserve_payments(false);
+    let to = world.id(bob);
+    world.devices[alice].pay_from_reserve(&to, 5 * ARX).unwrap();
+    alone_together(&mut world, alice, bob, 10);
+    assert_eq!(world.devices[bob].balance(), 0);
+    assert!(!world.happened(bob, |e| matches!(e, Event::ReceivedFromReserve { .. })));
+}
+
+#[test]
+fn a_device_without_a_certified_reserve_cannot_pay_from_one() {
+    let mut world = World::new(0);
+    let alice = world.join(1, Some(100 * ARX));
+    let bob = world.join(2, None);
+    let to = world.id(bob);
+    assert!(world.devices[alice].pay_from_reserve(&to, ARX).is_err());
+    assert!(world.devices[alice].fund_reserve(ARX).is_err());
+
+    // A reserve that exists but is not certified yet.
+    add_reserve(&mut world, alice, 11);
+    assert!(world.devices[alice].pay_from_reserve(&to, ARX).is_err());
+}
+
+#[test]
+fn a_forged_reserve_certificate_buys_nothing() {
+    // The payer builds the three blocks of a reserve itself and sends
+    // them with no witness confirmation.
+    let mut world = World::new(0);
+    let bob = world.join(2, None);
+    let policy = world.config.issuance.clone().unwrap();
+    let mut vclock = VectorClock::new();
+    let mut owner = AccountChain::from_seed(&[42; 32]);
+    let mut certificate = IssuanceCertificate::new(owner.id(), 100 * ARX).unwrap();
+    certificate.sign(&policy, &world.issuer_keys[0]).unwrap();
+    certificate.sign(&policy, &world.issuer_keys[1]).unwrap();
+    owner.open(100 * ARX, &mut vclock).unwrap();
+    let mut reserve = AccountChain::from_seed(&[43; 32]);
+    reserve.open(0, &mut vclock).unwrap();
+    let funding = owner.send(reserve.id(), 50 * ARX, &mut vclock).unwrap();
+    reserve.receive(&funding, &mut vclock).unwrap();
+    let payment = reserve.send(&world.id(bob), 50 * ARX, &mut vclock).unwrap();
+
+    let frames = vec![
+        Frame::ReserveBlock(funding),
+        Frame::ReserveBlock(reserve.chain[0].clone()),
+        Frame::ReserveBlock(reserve.chain[1].clone()),
+        Frame::Payment(payment),
+    ];
+    for packet in rogue_packets(43, 1, &frames) {
+        world.devices[bob].handle_packet(&packet);
+    }
+    assert_eq!(world.devices[bob].balance(), 0);
+}

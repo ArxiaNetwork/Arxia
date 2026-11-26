@@ -33,6 +33,17 @@
 //! account: it has no weight in settlement, and tells the payer it can
 //! stop repeating.
 //!
+//! # No witness in reach
+//!
+//! A device can carry a reserve: a second account, funded from the
+//! first by an ordinary payment and certified by the witnesses while
+//! they are in reach ([`Device::fund_reserve`]). Later, with nobody to
+//! ask, [`Device::pay_from_reserve`] broadcasts the payment together
+//! with the reserve certificate, and a receiver that accepts reserve
+//! payments credits it at once, up to the certified amount. See
+//! `arxia_lattice::reserve` for what a reserve does and does not
+//! guarantee.
+//!
 //! The device does not drive a radio. A caller moves bytes between
 //! [`Device::handle_packet`], [`Device::next_packet`] and whatever
 //! link it has, and calls [`Device::tick`] from time to time.
@@ -49,8 +60,9 @@ use alloc::vec::Vec;
 
 use arxia_core::ArxiaError;
 use arxia_lattice::bundle::{decode, encode, Frame};
+use arxia_lattice::witness::counted;
 use arxia_lattice::witness::{assess, receive_final, WitnessConfirmation, WitnessRoster};
-use arxia_lattice::{Block, BlockType, DurableWallet, EquivocationProof};
+use arxia_lattice::{Block, BlockType, DurableWallet, EquivocationProof, ReserveCertificate};
 use arxia_storage::StorageBackend;
 use arxia_transport::{fragment, Fragment, Reassembler};
 use ed25519_dalek::SigningKey;
@@ -119,6 +131,19 @@ pub enum Event {
         /// Hash of the payment block.
         payment: String,
     },
+    /// The witnesses certified this device's reserve.
+    ReserveCertified {
+        /// The certified amount, in micro-ARX.
+        amount: u64,
+    },
+    /// A payment from a certified reserve was credited with no witness
+    /// consulted.
+    ReceivedFromReserve {
+        /// Hash of the payment block.
+        payment: String,
+        /// Amount credited, in micro-ARX.
+        amount: u64,
+    },
 }
 
 /// A payment this device made, repeated until acknowledged.
@@ -140,6 +165,15 @@ struct Incoming {
     confirmations: Vec<WitnessConfirmation>,
 }
 
+/// The reserve's RECEIVE, waiting for the witnesses to confirm it.
+struct ReserveSetup {
+    funding: Block,
+    receive: Block,
+    request: Vec<u8>,
+    confirmations: Vec<WitnessConfirmation>,
+    ticks_since_sent: u32,
+}
+
 /// A device on the air. See the [crate documentation](crate).
 pub struct Device<S: StorageBackend> {
     wallet: DurableWallet<S>,
@@ -153,7 +187,14 @@ pub struct Device<S: StorageBackend> {
     incoming: BTreeMap<String, Incoming>,
     credited: BTreeSet<String>,
     resend_every: u32,
+    reserve: Option<DurableWallet<S>>,
+    reserve_setup: Option<ReserveSetup>,
+    accept_reserve_payments: bool,
 }
+
+const NO_RESERVE: ArxiaError = ArxiaError::Reserve {
+    fault: arxia_core::ReserveFault::NotCertified,
+};
 
 fn add_confirmation(held: &mut Vec<WitnessConfirmation>, confirmation: &WitnessConfirmation) {
     if !held.iter().any(|c| c.witness() == confirmation.witness()) {
@@ -204,7 +245,115 @@ impl<S: StorageBackend> Device<S> {
             incoming: BTreeMap::new(),
             credited: BTreeSet::new(),
             resend_every: resend_every.max(1),
+            reserve: None,
+            reserve_setup: None,
+            accept_reserve_payments: true,
         })
+    }
+
+    /// Give the device a reserve account: a second durable wallet, on
+    /// its own storage, with the same configuration and an account
+    /// opened empty.
+    pub fn with_reserve(mut self, reserve: DurableWallet<S>) -> Self {
+        self.reserve = Some(reserve);
+        self
+    }
+
+    /// Whether this device credits payments from certified reserves
+    /// without consulting witnesses. On by default; a receiver that
+    /// wants every payment settled by witnesses turns it off.
+    pub fn set_accept_reserve_payments(&mut self, accept: bool) {
+        self.accept_reserve_payments = accept;
+    }
+
+    /// The reserve wallet, if the device has one.
+    pub fn reserve(&self) -> Option<&DurableWallet<S>> {
+        self.reserve.as_ref()
+    }
+
+    /// The certificate of this device's reserve, once the witnesses
+    /// have certified it.
+    pub fn reserve_certificate(&self) -> Option<&ReserveCertificate> {
+        let reserve = self.reserve.as_ref()?;
+        reserve.wallet().ledger().reserve_for(reserve.id())
+    }
+
+    /// Move `amount` from the main account to the reserve account, by
+    /// an ordinary payment that the witnesses settle. Once it is
+    /// credited, the device asks the witnesses to confirm the reserve
+    /// and reports [`Event::ReserveCertified`].
+    ///
+    /// # Errors
+    ///
+    /// [`arxia_core::ReserveFault::NotCertified`] if the device has no reserve
+    /// account; otherwise as [`Device::pay`].
+    pub fn fund_reserve(&mut self, amount: u64) -> Result<String, ArxiaError> {
+        let reserve_id = self
+            .reserve
+            .as_ref()
+            .map(|reserve| String::from(reserve.id()))
+            .ok_or(NO_RESERVE)?;
+        self.pay(&reserve_id, amount)
+    }
+
+    /// Pay from the certified reserve, with no witness involved. The
+    /// payment travels with the reserve certificate and is repeated
+    /// until the receiver acknowledges it.
+    ///
+    /// # Errors
+    ///
+    /// - [`arxia_core::ReserveFault::NotCertified`] if the device has no certified
+    ///   reserve.
+    /// - Any error of [`DurableWallet::send`], including
+    ///   [`ArxiaError::InsufficientBalance`] beyond what is left of
+    ///   the reserve.
+    pub fn pay_from_reserve(
+        &mut self,
+        destination: &str,
+        amount: u64,
+    ) -> Result<String, ArxiaError> {
+        let certificate = self.reserve_certificate().cloned().ok_or(NO_RESERVE)?;
+        let reserve = self.reserve.as_mut().ok_or(NO_RESERVE)?;
+        let payment = reserve.send(destination, amount)?;
+
+        let (funding, opening, certified) = certificate.blocks();
+        let mut frames: Vec<Frame> = [funding, opening, certified]
+            .map(|block| Frame::ReserveBlock(block.clone()))
+            .into();
+        frames.extend(
+            certificate
+                .confirmations()
+                .iter()
+                .cloned()
+                .map(Frame::Confirmation),
+        );
+        // The reserve's earlier spends, so the receiver can follow its
+        // balance down to this payment.
+        frames.extend(
+            reserve.chain()[2..]
+                .iter()
+                .filter(|block| block.hash != payment.hash)
+                .cloned()
+                .map(Frame::Block),
+        );
+        frames.push(Frame::Payment(payment.clone()));
+        let message = encode(&frames)?;
+        self.broadcast(&message);
+        let hash = payment.hash.clone();
+        self.outgoing.insert(
+            hash.clone(),
+            Outgoing {
+                payment,
+                for_witnesses: Vec::new(),
+                // No witness is waited for: this is already what the
+                // receiver needs.
+                for_receiver: message,
+                confirmations: Vec::new(),
+                ticks_since_sent: 0,
+                repeats_since_settled: 0,
+            },
+        );
+        Ok(hash)
     }
 
     /// Hex-encoded public key of the device's account.
@@ -320,6 +469,13 @@ impl<S: StorageBackend> Device<S> {
                 due.push(outgoing.for_receiver.clone());
             }
         }
+        if let Some(setup) = &mut self.reserve_setup {
+            setup.ticks_since_sent += 1;
+            if setup.ticks_since_sent >= self.resend_every {
+                setup.ticks_since_sent = 0;
+                due.push(setup.request.clone());
+            }
+        }
         for message in due {
             self.broadcast(&message);
         }
@@ -365,6 +521,11 @@ impl<S: StorageBackend> Device<S> {
             if let Some(incoming) = self.incoming.get_mut(&hash) {
                 add_confirmation(&mut incoming.confirmations, confirmation);
             }
+            if let Some(setup) = &mut self.reserve_setup {
+                if setup.receive.hash == hash {
+                    add_confirmation(&mut setup.confirmations, confirmation);
+                }
+            }
             self.note_for_outgoing(&hash, confirmation);
         }
         self.take_proofs(frames);
@@ -374,14 +535,156 @@ impl<S: StorageBackend> Device<S> {
             _ => None,
         });
         if let Some(payment) = payment {
-            if payment.account != self.wallet.id() {
+            let own_reserve = self.reserve.as_ref().map(|reserve| reserve.id());
+            if payment.account != self.wallet.id() && Some(payment.account.as_str()) != own_reserve
+            {
                 if self.is_witness {
                     self.witness(frames, payment);
                 }
-                self.hold_if_mine(payment, &confirmations);
+                if !self.credit_from_reserve(frames, payment, &confirmations) {
+                    self.hold_if_mine(payment, &confirmations);
+                }
             }
         }
         self.settle();
+        self.certify_reserve();
+    }
+
+    /// A payment to this device that travels with a reserve
+    /// certificate: credit it at once, if the device accepts reserve
+    /// payments and the certificate holds. Returns whether the payment
+    /// was dealt with here.
+    fn credit_from_reserve(
+        &mut self,
+        frames: &[Frame],
+        payment: &Block,
+        confirmations: &[&WitnessConfirmation],
+    ) -> bool {
+        let reserve_blocks: Vec<&Block> = frames
+            .iter()
+            .filter_map(|frame| match frame {
+                Frame::ReserveBlock(block) => Some(block),
+                _ => None,
+            })
+            .collect();
+        let [funding, opening, certified] = reserve_blocks.as_slice() else {
+            return false;
+        };
+        if !self.accept_reserve_payments
+            || destination_of(payment) != Some(self.wallet.id())
+            || certified.account != payment.account
+        {
+            return false;
+        }
+        if self.credited.contains(&payment.hash) {
+            self.acknowledge(payment);
+            return true;
+        }
+        let owned: Vec<WitnessConfirmation> = confirmations.iter().map(|c| (*c).clone()).collect();
+        let Ok(kept) = counted(certified, &owned, &self.roster) else {
+            return false;
+        };
+        let Ok(certificate) = ReserveCertificate::new(
+            (*funding).clone(),
+            (*opening).clone(),
+            (*certified).clone(),
+            kept,
+        ) else {
+            return false;
+        };
+        let mut spends: Vec<Block> = frames
+            .iter()
+            .filter_map(|frame| match frame {
+                Frame::Block(block) if block.account == payment.account => Some(block.clone()),
+                _ => None,
+            })
+            .collect();
+        spends.push(payment.clone());
+        let amount = match &payment.block_type {
+            BlockType::Send { amount, .. } => *amount,
+            _ => 0,
+        };
+        if self
+            .wallet
+            .receive_from_reserve(&certificate, &spends)
+            .is_err()
+        {
+            return false;
+        }
+        self.credited.insert(payment.hash.clone());
+        self.acknowledge(payment);
+        self.events.push_back(Event::ReceivedFromReserve {
+            payment: payment.hash.clone(),
+            amount,
+        });
+        true
+    }
+
+    /// Once the witnesses confirmed the reserve's RECEIVE, keep the
+    /// certificate.
+    fn certify_reserve(&mut self) {
+        let Some(setup) = &self.reserve_setup else {
+            return;
+        };
+        let is_final =
+            assess(&setup.receive, &setup.confirmations, &self.roster).is_ok_and(|s| s.is_final());
+        if !is_final {
+            return;
+        }
+        let Some(setup) = self.reserve_setup.take() else {
+            return;
+        };
+        let Some(reserve) = self.reserve.as_mut() else {
+            return;
+        };
+        let Some(opening) = reserve.chain().first().cloned() else {
+            return;
+        };
+        let Ok(certificate) =
+            ReserveCertificate::new(setup.funding, opening, setup.receive, setup.confirmations)
+        else {
+            return;
+        };
+        if reserve.ingest_reserve(&certificate).is_ok() {
+            self.events.push_back(Event::ReserveCertified {
+                amount: certificate.amount(),
+            });
+        }
+    }
+
+    /// The funding payment reached the reserve account: credit it
+    /// there and ask the witnesses to confirm the reserve.
+    fn receive_into_reserve(&mut self, funding: &Block, confirmations: &[WitnessConfirmation]) {
+        let Some(reserve) = self.reserve.as_mut() else {
+            return;
+        };
+        let Ok(receive) = receive_final(reserve, funding, confirmations, &self.roster) else {
+            return;
+        };
+        let Some(opening) = reserve.chain().first().cloned() else {
+            return;
+        };
+        // What a witness needs to accept the RECEIVE: the settled
+        // funding, the reserve's opening block, then the block itself.
+        let mut frames: Vec<Frame> = confirmations
+            .iter()
+            .cloned()
+            .map(Frame::Confirmation)
+            .collect();
+        frames.push(Frame::Block(funding.clone()));
+        frames.push(Frame::Block(opening));
+        frames.push(Frame::Payment(receive.clone()));
+        let Ok(request) = encode(&frames) else {
+            return;
+        };
+        self.broadcast(&request);
+        self.reserve_setup = Some(ReserveSetup {
+            funding: funding.clone(),
+            receive,
+            request,
+            confirmations: Vec::new(),
+            ticks_since_sent: 0,
+        });
     }
 
     /// A confirmation of a payment this device made: an
@@ -587,8 +890,20 @@ impl<S: StorageBackend> Device<S> {
             };
             sent.for_receiver = for_receiver.clone();
             sent.ticks_since_sent = 0;
-            self.broadcast(&for_receiver);
-            self.events.push_back(Event::Settled { payment: hash });
+            let to_own_reserve =
+                self.reserve.as_ref().map(|reserve| reserve.id()) == destination_of(&sent.payment);
+            let (funding, confirmations) = (sent.payment.clone(), sent.confirmations.clone());
+            self.events.push_back(Event::Settled {
+                payment: hash.clone(),
+            });
+            if to_own_reserve {
+                // The receiver is this device: nothing to broadcast and
+                // nobody to wait for.
+                self.outgoing.remove(&hash);
+                self.receive_into_reserve(&funding, &confirmations);
+            } else {
+                self.broadcast(&for_receiver);
+            }
         }
     }
 }
