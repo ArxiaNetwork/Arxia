@@ -214,6 +214,13 @@ pub enum ArxiaError {
         fault: EquivocationFault,
     },
 
+    /// A reserve certificate was refused.
+    #[error("reserve error: {fault}")]
+    Reserve {
+        /// The specific reserve fault.
+        fault: ReserveFault,
+    },
+
     /// A witness roster or confirmation set was refused.
     #[error("witness error: {fault}")]
     Witness {
@@ -494,6 +501,27 @@ pub enum EquivocationFault {
     },
     /// The bytes do not decode into two compact blocks.
     #[error("the proof could not be decoded")]
+    Undecodable,
+}
+
+/// The specific fault behind an [`ArxiaError::Reserve`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ReserveFault {
+    /// The three blocks do not have the shape of a reserve: a SEND to
+    /// the reserve account, that account's empty `Open`, and its
+    /// RECEIVE of the SEND at position 2.
+    #[error("the blocks do not form a reserve")]
+    Malformed,
+    /// The ledger has no witness roster to check the certificate
+    /// against.
+    #[error("no witness roster is configured")]
+    NoRoster,
+    /// The ledger already holds a different certificate for this
+    /// reserve account.
+    #[error("a different certificate exists for this reserve account")]
+    Conflict,
+    /// The records do not decode into a certificate.
+    #[error("the certificate could not be decoded")]
     Undecodable,
 }
 

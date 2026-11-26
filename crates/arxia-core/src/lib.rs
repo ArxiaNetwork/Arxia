@@ -20,7 +20,7 @@ pub mod types;
 pub use constants::*;
 pub use error::{
     ArxiaError, BlockField, CapacityKind, DidFault, DriverFaultKind, EquivocationFault, FlashFault,
-    GenesisRule, HexFaultKind, IssuanceFault, JournalPart, KeyFault, RegionFaultKind,
+    GenesisRule, HexFaultKind, IssuanceFault, JournalPart, KeyFault, RegionFaultKind, ReserveFault,
     SerializationFaultKind, SerializedItem, SignatureFault, StorageFault, TransportFault,
     WitnessFault,
 };

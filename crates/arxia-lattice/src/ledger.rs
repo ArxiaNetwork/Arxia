@@ -71,8 +71,10 @@
 use crate::block::{Block, BlockType};
 use crate::equivocation::EquivocationProof;
 use crate::issuance::{IssuanceCertificate, IssuancePolicy};
+use crate::reserve::ReserveCertificate;
 use crate::validation::verify_block;
-use arxia_core::{ArxiaError, EquivocationFault, GenesisRule, IssuanceFault};
+use crate::witness::WitnessRoster;
+use arxia_core::{ArxiaError, EquivocationFault, GenesisRule, IssuanceFault, ReserveFault};
 use std::collections::{HashMap, HashSet};
 
 /// Compact summary of an accepted `Send` block, kept in
@@ -120,6 +122,14 @@ pub struct Ledger {
     /// Accounts that signed two blocks for one position, with the
     /// proof. See [`crate::equivocation`].
     equivocations: HashMap<String, EquivocationProof>,
+    /// Witnesses this ledger recognises, when it accepts reserve
+    /// certificates. See [`crate::reserve`].
+    roster: Option<WitnessRoster>,
+    /// Verified reserve certificates, by reserve account.
+    reserves: HashMap<String, ReserveCertificate>,
+    /// Owner accounts frozen because a reserve they funded was spent
+    /// twice, with the first frozen position.
+    owner_freezes: HashMap<String, u64>,
 }
 
 impl Ledger {
@@ -136,7 +146,72 @@ impl Ledger {
             issuance: None,
             certificates: HashMap::new(),
             equivocations: HashMap::new(),
+            roster: None,
+            reserves: HashMap::new(),
+            owner_freezes: HashMap::new(),
         }
+    }
+
+    /// Set the witnesses this ledger recognises. Required before
+    /// [`Ledger::add_reserve`].
+    pub fn set_witness_roster(&mut self, roster: WitnessRoster) {
+        self.roster = Some(roster);
+    }
+
+    /// The witness roster, if the ledger has one.
+    pub fn witness_roster(&self) -> Option<&WitnessRoster> {
+        self.roster.as_ref()
+    }
+
+    /// Verify a reserve certificate against the roster and keep it.
+    /// From then on [`Ledger::add_block`] accepts the certified
+    /// RECEIVE of the reserve account without holding the funding
+    /// block. Adding the same certificate again has no effect.
+    ///
+    /// # Errors
+    ///
+    /// - [`ReserveFault::NoRoster`] if no roster is set.
+    /// - [`arxia_core::WitnessFault::NotFinal`] if the confirmations
+    ///   do not reach finality.
+    /// - [`ReserveFault::Conflict`] if a different certificate is held
+    ///   for the same reserve account.
+    pub fn add_reserve(&mut self, certificate: &ReserveCertificate) -> Result<(), ArxiaError> {
+        let roster = self.roster.as_ref().ok_or(ArxiaError::Reserve {
+            fault: ReserveFault::NoRoster,
+        })?;
+        certificate.verify(roster)?;
+        if let Some(held) = self.reserves.get(certificate.account()) {
+            if held.blocks().2.hash != certificate.blocks().2.hash {
+                return Err(ArxiaError::Reserve {
+                    fault: ReserveFault::Conflict,
+                });
+            }
+            return Ok(());
+        }
+        self.reserves
+            .insert(certificate.account().to_string(), certificate.clone());
+        if self.equivocations.contains_key(certificate.account()) {
+            self.freeze_owner_of(certificate.account());
+        }
+        Ok(())
+    }
+
+    /// The verified certificate held for a reserve account, if any.
+    pub fn reserve_for(&self, account: &str) -> Option<&ReserveCertificate> {
+        self.reserves.get(account)
+    }
+
+    /// Freeze the owner of a reserve after its funding block.
+    fn freeze_owner_of(&mut self, reserve_account: &str) {
+        let Some(certificate) = self.reserves.get(reserve_account) else {
+            return;
+        };
+        let from = certificate.owner_nonce().saturating_add(1);
+        let entry = self
+            .owner_freezes
+            .entry(certificate.owner().to_string())
+            .or_insert(from);
+        *entry = (*entry).min(from);
     }
 
     /// Verify an equivocation proof and freeze the account from the
@@ -158,6 +233,9 @@ impl Ledger {
                     .insert(checked.account().to_string(), checked);
             }
         }
+        // A reserve spent twice also freezes the account that funded
+        // it. See [`crate::reserve`].
+        self.freeze_owner_of(proof.account());
         Ok(())
     }
 
@@ -173,14 +251,19 @@ impl Ledger {
 
     /// `Err(AccountFrozen)` if `account` is frozen at `nonce`.
     fn check_not_frozen(&self, account: &str, nonce: u64) -> Result<(), ArxiaError> {
-        match self.equivocations.get(account) {
-            Some(proof) if nonce >= proof.nonce() => Err(ArxiaError::Equivocation {
-                fault: EquivocationFault::AccountFrozen {
-                    from_nonce: proof.nonce(),
-                },
-            }),
-            _ => Ok(()),
+        let by_proof = self.equivocations.get(account).map(|proof| proof.nonce());
+        let as_owner = self.owner_freezes.get(account).copied();
+        let from_nonce = match (by_proof, as_owner) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None) | (None, Some(a)) => a,
+            (None, None) => return Ok(()),
+        };
+        if nonce >= from_nonce {
+            return Err(ArxiaError::Equivocation {
+                fault: EquivocationFault::AccountFrozen { from_nonce },
+            });
         }
+        Ok(())
     }
 
     /// Create a new empty ledger under an issuance policy: an `Open`
@@ -334,19 +417,31 @@ impl Ledger {
                     source_hash: source_hash.clone(),
                 });
             }
-            let send_info =
-                self.send_index
-                    .get(source_hash)
-                    .ok_or_else(|| ArxiaError::UnknownSourceSend {
-                        source_hash: source_hash.clone(),
-                    })?;
-            if send_info.destination != block.account {
-                return Err(ArxiaError::WrongDestination);
+            match self.send_index.get(source_hash) {
+                Some(send_info) => {
+                    if send_info.destination != block.account {
+                        return Err(ArxiaError::WrongDestination);
+                    }
+                    // A SEND in the frozen part of an account that
+                    // equivocated can no longer be received.
+                    self.check_not_frozen(&send_info.account, send_info.nonce)?;
+                    credited_amount = send_info.amount;
+                }
+                None => {
+                    // The funding block is not held. The RECEIVE is
+                    // accepted only if a verified reserve certificate
+                    // names exactly this block: the witnesses that
+                    // confirmed it replayed the funding.
+                    let certified = self
+                        .reserves
+                        .get(&block.account)
+                        .filter(|certificate| certificate.blocks().2.hash == block.hash)
+                        .ok_or_else(|| ArxiaError::UnknownSourceSend {
+                            source_hash: source_hash.clone(),
+                        })?;
+                    credited_amount = certified.amount();
+                }
             }
-            // A SEND in the frozen part of an account that equivocated
-            // can no longer be received.
-            self.check_not_frozen(&send_info.account, send_info.nonce)?;
-            credited_amount = send_info.amount;
         }
 
         // Nothing new is accepted from an account at or after the
