@@ -318,6 +318,21 @@ impl<S: StorageBackend> Witness<S> {
         self.wallet.ingest_all(blocks)
     }
 
+    /// Take in a bundle, as [`DurableWallet::ingest_bundle`]: its
+    /// certificates and history under the ledger rules. Returns the
+    /// payment and the confirmations it carried, without confirming
+    /// anything.
+    ///
+    /// # Errors
+    ///
+    /// As [`DurableWallet::ingest_bundle`].
+    pub fn ingest_bundle(
+        &mut self,
+        frames: &[crate::bundle::Frame],
+    ) -> Result<(Block, Vec<WitnessConfirmation>), ArxiaError> {
+        self.wallet.ingest_bundle(frames)
+    }
+
     /// Confirm `block`, if this witness's ledger accepts it.
     ///
     /// The block is stored before the confirmation is signed.
@@ -359,8 +374,9 @@ pub fn receive_final<S: StorageBackend>(
     // Keep the confirmations with the block, so that the payment stays
     // acceptable, and can be shown to be final, if the payer is later
     // found to have signed another block for the same position.
+    // Recorded before the block is taken in: a settled block is accepted
+    // without the history that precedes it.
     if wallet.wallet().ledger().witness_roster().is_some() {
-        wallet.ingest(send_block)?;
         wallet.ingest_settlement(send_block, confirmations)?;
     }
     wallet.receive(send_block)

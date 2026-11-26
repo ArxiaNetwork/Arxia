@@ -33,7 +33,7 @@
 //! ingested: certificates against the issuance policy, blocks under
 //! the ledger rules, confirmations against the witness roster.
 
-use crate::block::Block;
+use crate::block::{Block, BlockType};
 use crate::durable::DurableWallet;
 use crate::equivocation::EquivocationProof;
 use crate::issuance::IssuanceCertificate;
@@ -238,6 +238,60 @@ impl<S: StorageBackend> DurableWallet<S> {
         }
         frames.push(Frame::Payment(payment.clone()));
         Ok(frames)
+    }
+
+    /// Build a short bundle for `payment`: this wallet's own blocks
+    /// since the last one the witnesses settled, and for every payment
+    /// it received in that span, the SEND it received with the
+    /// confirmations that settled it.
+    ///
+    /// A receiver or a witness with a roster takes each settled block
+    /// as a starting point and needs nothing older, so the size of the
+    /// bundle follows recent activity, not the age of the account.
+    ///
+    /// It is sufficient when everything received in that span was
+    /// itself settled. Funds that rest on something else, such as a
+    /// reserve, need [`DurableWallet::payment_bundle`].
+    pub fn delta_bundle(&self, payment: &Block) -> Vec<Frame> {
+        let ledger = self.wallet().ledger();
+        let own = self.chain();
+        let settled = |block: &Block| ledger.settlement_for(&block.hash);
+        let end = own
+            .iter()
+            .position(|block| block.hash == payment.hash)
+            .unwrap_or(own.len());
+        let start = own[..end]
+            .iter()
+            .rposition(|block| settled(block).is_some())
+            .unwrap_or(0);
+
+        let mut frames = Vec::new();
+        let push_with_settlement = |frames: &mut Vec<Frame>, block: &Block| {
+            frames.push(Frame::Block(block.clone()));
+            if let Some(confirmations) = settled(block) {
+                frames.extend(confirmations.iter().cloned().map(Frame::Confirmation));
+            }
+        };
+        if start == 0 {
+            if let Some(certificate) = ledger.issuance_for(self.id()) {
+                frames.push(Frame::Issuance(certificate.clone()));
+            }
+        }
+        for block in &own[start..end] {
+            if let BlockType::Receive { source_hash } = &block.block_type {
+                if let Some(source) = ledger.find_block(source_hash) {
+                    push_with_settlement(&mut frames, source);
+                }
+            }
+            push_with_settlement(&mut frames, block);
+        }
+        for proof in ledger.equivocations() {
+            let (first, second) = proof.blocks();
+            frames.push(Frame::EquivocationBlock(first.clone()));
+            frames.push(Frame::EquivocationBlock(second.clone()));
+        }
+        frames.push(Frame::Payment(payment.clone()));
+        frames
     }
 
     /// Take in the certificates and history blocks of a bundle, under

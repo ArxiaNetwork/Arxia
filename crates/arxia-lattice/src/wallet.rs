@@ -152,18 +152,19 @@ impl Wallet {
     }
 
     /// As [`Wallet::restore`], under a configuration. Issuance and
-    /// reserve certificates are verified and added before the blocks
-    /// are replayed.
+    /// reserve certificates and settlements are verified and added
+    /// before the blocks are replayed.
     ///
     /// # Errors
     ///
-    /// Any error of [`Ledger::add_issuance`], [`Ledger::add_reserve`]
-    /// or [`Ledger::add_block`].
+    /// Any error of [`Ledger::add_issuance`], [`Ledger::add_reserve`],
+    /// [`Ledger::add_settlement`] or [`Ledger::add_block`].
     pub fn restore_with_config(
         seed: &[u8; 32],
         config: WalletConfig,
         issuance: &[IssuanceCertificate],
         reserves: &[ReserveCertificate],
+        settlements: &[(Block, Vec<WitnessConfirmation>)],
         blocks: impl IntoIterator<Item = Block>,
     ) -> Result<Self, ArxiaError> {
         let mut ledger = config.ledger();
@@ -172,6 +173,11 @@ impl Wallet {
         }
         for certificate in reserves {
             ledger.add_reserve(certificate)?;
+        }
+        // Before the replay: a settled block may be the first one held
+        // for its account.
+        for (block, confirmations) in settlements {
+            ledger.add_settlement(block, confirmations)?;
         }
         Self::replay(seed, ledger, blocks)
     }
@@ -326,10 +332,12 @@ impl Wallet {
     ///   it in place of the held one and this returns `Ok`.
     /// - Any error of [`Ledger::add_block`] otherwise.
     pub fn ingest(&mut self, block: &Block) -> Result<(), ArxiaError> {
-        let known = usize::try_from(block.nonce)
-            .ok()
-            .and_then(|nonce| nonce.checked_sub(1))
-            .and_then(|index| self.ledger.get_chain(&block.account)?.get(index));
+        if self.ledger.covers(block) {
+            // Older than the settled block this ledger starts that
+            // account from: superseded, nothing to take in.
+            return verify_block(block);
+        }
+        let known = self.ledger.block_at(&block.account, block.nonce);
         if let Some(known) = known {
             verify_block(block)?;
             if known.hash == block.hash {
