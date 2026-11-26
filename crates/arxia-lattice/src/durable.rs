@@ -74,7 +74,7 @@ const SETTLEMENT_PREFIX: &[u8] = b"w/s/";
 pub struct DurableWallet<S: StorageBackend> {
     wallet: Wallet,
     storage: S,
-    /// Number of blocks on storage; also the next sequence number.
+    /// The next block sequence number: one past the highest ever used.
     stored_blocks: u64,
     /// Set when a write failed after the in-memory state advanced.
     reopen_required: bool,
@@ -145,15 +145,25 @@ impl<S: StorageBackend> DurableWallet<S> {
         };
 
         let mut records: Vec<Vec<u8>> = Vec::new();
-        storage.scan_prefix(BLOCK_PREFIX, &mut |_key, value| {
+        let mut last_sequence: Option<u64> = None;
+        storage.scan_prefix(BLOCK_PREFIX, &mut |key, value| {
             records.push(value.to_vec());
+            last_sequence = <[u8; 8]>::try_from(&key[BLOCK_PREFIX.len()..])
+                .ok()
+                .map(u64::from_be_bytes);
             true
         })?;
         let blocks = records
             .iter()
             .map(|record| from_compact_bytes(record).map_err(|_| undecodable()))
             .collect::<Result<Vec<Block>, ArxiaError>>()?;
-        let stored_blocks = blocks.len() as u64;
+        // Sequence numbers are never reused: records can be removed
+        // when the ledger follows the witnesses to a settled block.
+        let stored_blocks = match (records.is_empty(), last_sequence) {
+            (true, _) => 0,
+            (false, Some(last)) => last.checked_add(1).ok_or_else(undecodable)?,
+            (false, None) => return Err(undecodable()),
+        };
         let by_hash: std::collections::HashMap<String, Block> = blocks
             .iter()
             .map(|block| (block.hash.clone(), block.clone()))
@@ -369,6 +379,13 @@ impl<S: StorageBackend> DurableWallet<S> {
             }
             Err(error) => return Err(error),
         }
+        let replaced = self.wallet.take_replaced();
+        if !replaced.is_empty() {
+            // The ledger let an unsettled block go for the settled
+            // one. Storage follows in one batch: the old records out,
+            // the new block in.
+            return self.persist_replacement(&replaced, block);
+        }
         if !already_held {
             self.persist(block)?;
         }
@@ -559,6 +576,44 @@ impl<S: StorageBackend> DurableWallet<S> {
             self.reopen_required = true;
         }
         outcome
+    }
+
+    /// Remove the records of `removed` and append `block`, atomically.
+    fn persist_replacement(&mut self, removed: &[Block], block: &Block) -> Result<(), ArxiaError> {
+        let outcome = (|| {
+            let gone = removed
+                .iter()
+                .map(to_compact_bytes)
+                .collect::<Result<Vec<_>, ArxiaError>>()?;
+            let mut stale_keys: Vec<Vec<u8>> = Vec::new();
+            self.storage.scan_prefix(BLOCK_PREFIX, &mut |key, value| {
+                if gone.iter().any(|record| record.as_slice() == value) {
+                    stale_keys.push(key.to_vec());
+                }
+                true
+            })?;
+            let new_key = block_key(self.stored_blocks);
+            let new_record = to_compact_bytes(block)?;
+            let mut batch: Vec<BatchOp<'_>> = stale_keys
+                .iter()
+                .map(|key| BatchOp::Delete { key })
+                .collect();
+            batch.push(BatchOp::Put {
+                key: &new_key,
+                value: &new_record,
+            });
+            self.storage.apply_batch(&batch)
+        })();
+        match outcome {
+            Ok(()) => {
+                self.stored_blocks += 1;
+                self.persist_equivocation(&block.account)
+            }
+            Err(error) => {
+                self.reopen_required = true;
+                Err(error)
+            }
+        }
     }
 
     /// Write one accepted block. On failure the wallet stops accepting
