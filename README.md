@@ -108,9 +108,12 @@ processes.
 ### Not built yet
 
 - `arxia-node` is a stub binary: it logs a startup banner and exits.
-- Radio drivers (LoRa, Bluetooth, SMS, satellite). `arxia-transport`
-  provides the interface, signed messages, fragment splitting and
-  reassembly, and a simulated link used in tests.
+- A radio link in use. `arxia-radio` is a LoRa driver for the SX1276
+  family, tested against a register-level model of the chip; it has not
+  been run on hardware and the firmware does not use it yet. There is no
+  driver for Bluetooth, SMS or satellite. `arxia-transport` provides the
+  interface, signed messages, fragment splitting and reassembly, and a
+  simulated link used in tests.
 - The node firmware is a first stage (`targets/esp32-node`): the wallet and
   the ledger build for the board and run a check at boot. It has not been
   run on a board yet, and it does not use the radio.
@@ -201,6 +204,7 @@ See [docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md) for details.
 | `arxia-gossip` | Nonce registry, signed gossip messages, sync (earlier design) |
 | `arxia-finality` | Witness node and settlement by confirmed weight; the earlier finality assessment |
 | `arxia-transport` | Transport interface, fragment splitting and reassembly, simulated transport |
+| `arxia-radio` | Blocking LoRa driver for the SX1276 family, generic over `embedded-hal` (not yet run on hardware) |
 | `arxia-relay` | Relay receipts, relay scoring, signed penalty proofs |
 | `arxia-did` | `did:arxia` identifiers derived from Ed25519 keys |
 | `arxia-storage` | Storage interface, in-memory backends, shared conformance suite |
