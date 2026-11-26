@@ -35,6 +35,7 @@ use std::collections::HashSet;
 
 use crate::block::Block;
 use crate::chain::{AccountChain, VectorClock};
+use crate::equivocation::EquivocationProof;
 use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::ledger::Ledger;
 use crate::validation::verify_block;
@@ -219,7 +220,9 @@ impl Wallet {
     ///
     /// - [`ArxiaError::NonceConflict`] if the ledger holds a different
     ///   authentic block at the same account position. Both blocks
-    ///   carry the account's signature.
+    ///   carry the account's signature: the pair is kept as an
+    ///   [`EquivocationProof`] and the account is frozen from that
+    ///   position (see [`crate::equivocation`]).
     /// - Any error of [`Ledger::add_block`] otherwise.
     pub fn ingest(&mut self, block: &Block) -> Result<(), ArxiaError> {
         let known = usize::try_from(block.nonce)
@@ -231,6 +234,8 @@ impl Wallet {
             if known.hash == block.hash {
                 return Ok(());
             }
+            let proof = EquivocationProof::new(known.clone(), block.clone())?;
+            self.ledger.add_equivocation(&proof)?;
             return Err(ArxiaError::NonceConflict {
                 account: block.account.clone(),
                 nonce: block.nonce,
@@ -238,6 +243,16 @@ impl Wallet {
             });
         }
         self.ledger.add_block(block.clone())
+    }
+
+    /// Accept an equivocation proof from another device and freeze the
+    /// account it names. See [`Ledger::add_equivocation`].
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Ledger::add_equivocation`].
+    pub fn ingest_equivocation(&mut self, proof: &EquivocationProof) -> Result<(), ArxiaError> {
+        self.ledger.add_equivocation(proof)
     }
 
     /// Accept a sequence of blocks in order, stopping at the first one

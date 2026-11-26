@@ -69,9 +69,10 @@
 //! rejected block never pollutes them.
 
 use crate::block::{Block, BlockType};
+use crate::equivocation::EquivocationProof;
 use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::validation::verify_block;
-use arxia_core::{ArxiaError, GenesisRule, IssuanceFault};
+use arxia_core::{ArxiaError, EquivocationFault, GenesisRule, IssuanceFault};
 use std::collections::{HashMap, HashSet};
 
 /// Compact summary of an accepted `Send` block, kept in
@@ -85,6 +86,10 @@ struct SendInfo {
     /// expected post-balance from it, never from what the `Receive`
     /// declares about itself.
     amount: u64,
+    /// Account and position of the `Send`, to tell whether it lies in
+    /// the frozen part of an account that equivocated.
+    account: String,
+    nonce: u64,
 }
 
 /// Global ledger index of all account chains.
@@ -112,6 +117,9 @@ pub struct Ledger {
     issuance: Option<IssuancePolicy>,
     /// Verified certificates, by account.
     certificates: HashMap<String, IssuanceCertificate>,
+    /// Accounts that signed two blocks for one position, with the
+    /// proof. See [`crate::equivocation`].
+    equivocations: HashMap<String, EquivocationProof>,
 }
 
 impl Ledger {
@@ -127,6 +135,51 @@ impl Ledger {
             total_supply: 0,
             issuance: None,
             certificates: HashMap::new(),
+            equivocations: HashMap::new(),
+        }
+    }
+
+    /// Verify an equivocation proof and freeze the account from the
+    /// conflicting position onward. See [`crate::equivocation`] for
+    /// what the freeze covers. If the account is already frozen, the
+    /// earlier of the two positions is kept.
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`crate::verify_block`] for a block of the proof
+    /// that is not authentic.
+    pub fn add_equivocation(&mut self, proof: &EquivocationProof) -> Result<(), ArxiaError> {
+        let (first, second) = proof.blocks();
+        let checked = EquivocationProof::new(first.clone(), second.clone())?;
+        match self.equivocations.get(checked.account()) {
+            Some(held) if held.nonce() <= checked.nonce() => {}
+            _ => {
+                self.equivocations
+                    .insert(checked.account().to_string(), checked);
+            }
+        }
+        Ok(())
+    }
+
+    /// The proof that froze `account`, if it is frozen.
+    pub fn equivocation_for(&self, account: &str) -> Option<&EquivocationProof> {
+        self.equivocations.get(account)
+    }
+
+    /// Every proof this ledger holds, to pass on to other nodes.
+    pub fn equivocations(&self) -> impl Iterator<Item = &EquivocationProof> {
+        self.equivocations.values()
+    }
+
+    /// `Err(AccountFrozen)` if `account` is frozen at `nonce`.
+    fn check_not_frozen(&self, account: &str, nonce: u64) -> Result<(), ArxiaError> {
+        match self.equivocations.get(account) {
+            Some(proof) if nonce >= proof.nonce() => Err(ArxiaError::Equivocation {
+                fault: EquivocationFault::AccountFrozen {
+                    from_nonce: proof.nonce(),
+                },
+            }),
+            _ => Ok(()),
         }
     }
 
@@ -290,8 +343,15 @@ impl Ledger {
             if send_info.destination != block.account {
                 return Err(ArxiaError::WrongDestination);
             }
+            // A SEND in the frozen part of an account that equivocated
+            // can no longer be received.
+            self.check_not_frozen(&send_info.account, send_info.nonce)?;
             credited_amount = send_info.amount;
         }
+
+        // Nothing new is accepted from an account at or after the
+        // position where it signed two blocks.
+        self.check_not_frozen(&block.account, block.nonce)?;
 
         let chain = self.chains.entry(block.account.clone()).or_default();
 
@@ -415,6 +475,8 @@ impl Ledger {
                     SendInfo {
                         destination: destination.clone(),
                         amount: *amount,
+                        account: block.account.clone(),
+                        nonce: block.nonce,
                     },
                 );
             }

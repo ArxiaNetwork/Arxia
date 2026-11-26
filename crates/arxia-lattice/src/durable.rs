@@ -37,7 +37,10 @@
 //! - `w/i/<account, 32 bytes>`: the issuance certificate held for an
 //!   account, when the wallet runs under an issuance policy.
 //!
-//! All three fit the limits of the flash backend.
+//! - `w/e/<account, 32 bytes><0 or 1>`: the two blocks of an
+//!   equivocation proof, one record each.
+//!
+//! All of them fit the limits of the flash backend.
 //!
 //! # Scope
 //!
@@ -47,15 +50,17 @@
 //! confirmations from other nodes, not by local persistence.
 
 use crate::block::Block;
+use crate::equivocation::EquivocationProof;
 use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::serialization::{from_compact_bytes, to_compact_bytes};
 use crate::wallet::Wallet;
 use arxia_core::{ArxiaError, StorageFault};
-use arxia_storage::StorageBackend;
+use arxia_storage::{BatchOp, StorageBackend};
 
 const SEED_KEY: &[u8] = b"w/k";
 const BLOCK_PREFIX: &[u8] = b"w/b/";
 const ISSUANCE_PREFIX: &[u8] = b"w/i/";
+const EQUIVOCATION_PREFIX: &[u8] = b"w/e/";
 
 /// A [`Wallet`] persisted through a storage backend.
 pub struct DurableWallet<S: StorageBackend> {
@@ -126,7 +131,7 @@ impl<S: StorageBackend> DurableWallet<S> {
             .map(|record| from_compact_bytes(record).map_err(|_| undecodable()))
             .collect::<Result<Vec<Block>, ArxiaError>>()?;
         let stored_blocks = blocks.len() as u64;
-        let wallet = match policy {
+        let mut wallet = match policy {
             None => Wallet::restore(&seed, blocks)?,
             Some(policy) => {
                 let mut records: Vec<Vec<u8>> = Vec::new();
@@ -143,6 +148,23 @@ impl<S: StorageBackend> DurableWallet<S> {
                 Wallet::restore_with_issuance(&seed, policy, &certificates, blocks)?
             }
         };
+
+        // Proofs are applied after the replay: the blocks an account
+        // signed before it was frozen were accepted at the time and
+        // must replay.
+        let mut records: Vec<Vec<u8>> = Vec::new();
+        storage.scan_prefix(EQUIVOCATION_PREFIX, &mut |_key, value| {
+            records.push(value.to_vec());
+            true
+        })?;
+        if !records.len().is_multiple_of(2) {
+            return Err(undecodable());
+        }
+        for pair in records.chunks_exact(2) {
+            let first = from_compact_bytes(&pair[0]).map_err(|_| undecodable())?;
+            let second = from_compact_bytes(&pair[1]).map_err(|_| undecodable())?;
+            wallet.ingest_equivocation(&EquivocationProof::new(first, second)?)?;
+        }
 
         Ok(Self {
             wallet,
@@ -246,11 +268,32 @@ impl<S: StorageBackend> DurableWallet<S> {
     pub fn ingest(&mut self, block: &Block) -> Result<(), ArxiaError> {
         self.ready()?;
         let already_held = self.holds(block);
-        self.wallet.ingest(block)?;
+        match self.wallet.ingest(block) {
+            Ok(()) => {}
+            Err(conflict @ ArxiaError::NonceConflict { .. }) => {
+                // The wallet kept the two blocks as a proof; make the
+                // proof durable before reporting the conflict.
+                self.persist_equivocation(&block.account)?;
+                return Err(conflict);
+            }
+            Err(error) => return Err(error),
+        }
         if !already_held {
             self.persist(block)?;
         }
         Ok(())
+    }
+
+    /// Accept an equivocation proof from another device and make it
+    /// durable.
+    ///
+    /// # Errors
+    ///
+    /// As [`Wallet::ingest_equivocation`], plus any backend error.
+    pub fn ingest_equivocation(&mut self, proof: &EquivocationProof) -> Result<(), ArxiaError> {
+        self.ready()?;
+        self.wallet.ingest_equivocation(proof)?;
+        self.persist_equivocation(proof.account())
     }
 
     /// Accept a sequence of blocks in order, as [`Wallet::ingest_all`].
@@ -291,6 +334,39 @@ impl<S: StorageBackend> DurableWallet<S> {
             .and_then(|nonce| nonce.checked_sub(1))
             .and_then(|index| self.wallet.ledger().get_chain(&block.account)?.get(index))
             .is_some_and(|known| known.hash == block.hash)
+    }
+
+    /// Write the proof the ledger holds for `account`, both blocks in
+    /// one batch.
+    fn persist_equivocation(&mut self, account: &str) -> Result<(), ArxiaError> {
+        let Some(proof) = self.wallet.ledger().equivocation_for(account) else {
+            return Ok(());
+        };
+        let (first, second) = proof.blocks();
+        let outcome = (|| {
+            let account_bytes = hex::decode(account).map_err(ArxiaError::HexDecode)?;
+            let mut first_key = EQUIVOCATION_PREFIX.to_vec();
+            first_key.extend_from_slice(&account_bytes);
+            let mut second_key = first_key.clone();
+            first_key.push(0);
+            second_key.push(1);
+            let first_record = to_compact_bytes(first)?;
+            let second_record = to_compact_bytes(second)?;
+            self.storage.apply_batch(&[
+                BatchOp::Put {
+                    key: &first_key,
+                    value: &first_record,
+                },
+                BatchOp::Put {
+                    key: &second_key,
+                    value: &second_record,
+                },
+            ])
+        })();
+        if outcome.is_err() {
+            self.reopen_required = true;
+        }
+        outcome
     }
 
     /// Write one accepted block. On failure the wallet stops accepting
