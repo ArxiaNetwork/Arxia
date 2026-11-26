@@ -122,6 +122,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "arxia-device"
+version = "0.1.0"
+dependencies = [
+ "arxia-core",
+ "arxia-crypto",
+ "arxia-lattice",
+ "arxia-storage",
+ "arxia-transport",
+ "ed25519-dalek",
+ "hex",
+]
+
+[[package]]
 name = "arxia-did"
 version = "0.1.0"
 dependencies = [

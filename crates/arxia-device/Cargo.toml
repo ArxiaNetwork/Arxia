@@ -1,0 +1,34 @@
+[package]
+name = "arxia-device"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "What a device does on the air: paying, witnessing and receiving, as packets in and packets out"
+
+# Declared directly rather than workspace-inherited so default
+# features can be turned off (cargo ignores that override on inherited
+# dependencies). Versions match the workspace pins.
+[dependencies]
+arxia-core = { path = "../arxia-core", default-features = false }
+arxia-crypto = { path = "../arxia-crypto", default-features = false }
+arxia-lattice = { path = "../arxia-lattice", default-features = false }
+arxia-storage = { path = "../arxia-storage", default-features = false }
+arxia-transport = { path = "../arxia-transport", default-features = false }
+ed25519-dalek = { version = "3.0", default-features = false, features = ["fast", "zeroize"] }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+
+[features]
+# std (default) only forwards to the crates below; the device logic
+# itself needs nothing from an operating system.
+default = ["std"]
+std = [
+    "arxia-core/std",
+    "arxia-crypto/std",
+    "arxia-lattice/std",
+    "arxia-storage/std",
+    "arxia-transport/std",
+    "hex/std",
+]

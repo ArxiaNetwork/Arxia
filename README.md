@@ -122,7 +122,10 @@ processes.
   from the network.
 - A payment carries the payer's whole history. Starting from a settled
   point is not implemented yet.
-- There is no retransmission protocol for lost packets.
+- Lost packets are handled by repetition: a payer repeats until the
+  receiver acknowledges, and repeats of a message share an identifier so
+  missing fragments are filled in. There is no rate control and no
+  duty-cycle accounting.
 - ChaCha20-Poly1305 encryption and SLIP39 seed backup are stubs that return
   `Unimplemented`. Keys are stored unencrypted.
 - `arxia-wasm` and `arxia-inspector` are placeholders. `arxia-cli` generates
@@ -204,6 +207,7 @@ See [docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md) for details.
 | `arxia-gossip` | Nonce registry, signed gossip messages, sync (earlier design) |
 | `arxia-finality` | Witness node and settlement by confirmed weight; the earlier finality assessment |
 | `arxia-transport` | Transport interface, fragment splitting and reassembly, simulated transport |
+| `arxia-device` | What a device does on the air: paying, witnessing and receiving, as packets in and packets out |
 | `arxia-radio` | Blocking LoRa driver for the SX1276 family, generic over `embedded-hal` (not yet run on hardware) |
 | `arxia-relay` | Relay receipts, relay scoring, signed penalty proofs |
 | `arxia-did` | `did:arxia` identifiers derived from Ed25519 keys |
