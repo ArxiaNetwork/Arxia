@@ -1,0 +1,16 @@
+[package]
+name = "arxia-radio"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Blocking LoRa driver for the Semtech SX1276 family, generic over embedded-hal"
+
+[dependencies]
+embedded-hal = { version = "1.0", default-features = false }
+
+[dev-dependencies]
+arxia-crypto = { path = "../arxia-crypto" }
+arxia-transport = { path = "../arxia-transport" }

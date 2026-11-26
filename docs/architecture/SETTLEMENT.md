@@ -99,7 +99,7 @@ A bundle is a sequence of frames, `[tag][length][payload]`, each at most 238 byt
 
 ## What is not built
 
-- Radio drivers. The only link implementation is the simulated one.
+- A radio link in use. `arxia-radio` drives the SX1276 family and is tested against a model of the chip, not yet on hardware; the firmware does not use it yet.
 - A node. `bin/arxia-node` is a stub, and the device firmware in `targets/esp32-node` is a first stage with no radio that has not been run on a board yet.
 - Bonds, penalties for a witness, and a way to update a roster from the network.
 - A retransmission protocol for lost packets.

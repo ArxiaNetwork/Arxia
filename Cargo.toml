@@ -10,6 +10,7 @@ members = [
     "crates/arxia-consensus",
     "crates/arxia-crdt",
     "crates/arxia-transport",
+    "crates/arxia-radio",
     "crates/arxia-gossip",
     "crates/arxia-did",
     "crates/arxia-wasm",

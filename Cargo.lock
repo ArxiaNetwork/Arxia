@@ -226,6 +226,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arxia-radio"
+version = "0.1.0"
+dependencies = [
+ "arxia-crypto",
+ "arxia-transport",
+ "embedded-hal",
+]
+
+[[package]]
 name = "arxia-relay"
 version = "0.1.0"
 dependencies = [
@@ -672,6 +681,12 @@ name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
+
+[[package]]
+name = "embedded-hal"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
 name = "embedded-storage"
