@@ -31,7 +31,15 @@
 //! them cannot know about the other. That case is covered by
 //! confirmations from other nodes, outside this module.
 
-use std::collections::HashSet;
+use alloc::collections::BTreeSet;
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 use crate::block::Block;
 use crate::chain::{AccountChain, VectorClock};
@@ -84,12 +92,32 @@ struct Snapshot {
     chain_len: usize,
     balance: u64,
     nonce: u64,
-    consumed_sources: HashSet<String>,
+    consumed_sources: BTreeSet<String>,
     vclock: VectorClock,
 }
 
 impl Wallet {
+    /// Create a wallet for the account of a 32-byte signing seed, with
+    /// an empty ledger built from `config`. This is the constructor for
+    /// targets without an operating system: the caller obtains the seed
+    /// from its own entropy source.
+    pub fn from_seed(seed: &[u8; 32], config: WalletConfig) -> Self {
+        Self {
+            account: AccountChain::from_seed(seed),
+            ledger: config.ledger(),
+            vclock: VectorClock::new(),
+            replaced: Vec::new(),
+        }
+    }
+
+    /// Install the source of block timestamps. See
+    /// [`AccountChain::set_clock`].
+    pub fn set_clock(&mut self, clock: fn() -> u64) {
+        self.account.set_clock(clock);
+    }
+
     /// Create a wallet with a fresh keypair and an empty ledger.
+    #[cfg(feature = "std")]
     pub fn new() -> Self {
         Self {
             account: AccountChain::new(),
@@ -101,6 +129,7 @@ impl Wallet {
 
     /// Create a wallet with a fresh keypair and an empty ledger under
     /// an issuance policy. See [`crate::issuance`].
+    #[cfg(feature = "std")]
     pub fn with_issuance(policy: IssuancePolicy) -> Self {
         Self {
             account: AccountChain::new(),
@@ -112,6 +141,7 @@ impl Wallet {
 
     /// Create a wallet with a fresh keypair and an empty ledger built
     /// from `config`.
+    #[cfg(feature = "std")]
     pub fn with_config(config: WalletConfig) -> Self {
         Self {
             account: AccountChain::new(),
@@ -333,7 +363,7 @@ impl Wallet {
     /// [`Ledger::replace_with_settled`]). A caller that mirrors the
     /// ledger elsewhere removes them there too.
     pub fn take_replaced(&mut self) -> Vec<Block> {
-        std::mem::take(&mut self.replaced)
+        core::mem::take(&mut self.replaced)
     }
 
     /// Record that `block` is final under the witness roster. See
@@ -463,6 +493,7 @@ impl Wallet {
     }
 }
 
+#[cfg(feature = "std")]
 impl Default for Wallet {
     fn default() -> Self {
         Self::new()

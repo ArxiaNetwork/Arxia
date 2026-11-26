@@ -19,7 +19,15 @@
 //! the first from that witness. Anything else is ignored rather than
 //! fatal.
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 use crate::block::Block;
 use crate::validation::verify_block;

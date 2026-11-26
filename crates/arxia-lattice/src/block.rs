@@ -25,6 +25,14 @@
 //! `reconcile_partitions`) propagate via `?` — none of them is
 //! in a context that can't return `ArxiaError`.
 
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use serde::{Deserialize, Serialize};
 
 use arxia_core::{ArxiaError, KeyFault, SerializedItem};

@@ -37,7 +37,7 @@
 //! with real threads.
 //!
 //! What remains genuinely single-threaded is capacity, not
-//! correctness: the ledger is an in-memory `HashMap` with no pruning,
+//! correctness: the ledger is an in-memory `BTreeMap` with no pruning,
 //! so a long-lived node needs a storage strategy before it needs more
 //! parallelism.
 //!
@@ -74,10 +74,18 @@ use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::reserve::ReserveCertificate;
 use crate::validation::verify_block;
 use crate::witness::{assess, counted, WitnessConfirmation, WitnessRoster};
+use alloc::collections::{BTreeMap, BTreeSet};
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use arxia_core::{
     ArxiaError, EquivocationFault, GenesisRule, IssuanceFault, ReserveFault, WitnessFault,
 };
-use std::collections::{HashMap, HashSet};
 
 /// Compact summary of an accepted `Send` block, kept in
 /// [`Ledger::send_index`] for O(1) lookup at `Receive` ingest time.
@@ -100,17 +108,17 @@ struct SendInfo {
 #[derive(Clone)]
 pub struct Ledger {
     /// Map from account hex public key to block list.
-    pub chains: HashMap<String, Vec<Block>>,
+    pub chains: BTreeMap<String, Vec<Block>>,
     /// Index of all accepted `Send` block hashes → destination + amount.
     /// Maintained incrementally on every accepted `Send` so a `Receive`
     /// referential check is O(1).
-    send_index: HashMap<String, SendInfo>,
+    send_index: BTreeMap<String, SendInfo>,
     /// Set of `source_hash`es already credited by an accepted `Receive`
     /// somewhere in the lattice. The per-chain `AccountChain.consumed_sources`
     /// is local to each receiver ; this set is the cross-chain
     /// counterpart preventing the same `Send` from funding two
     /// different `Receive`s on different chains.
-    consumed_sends: HashSet<String>,
+    consumed_sends: BTreeSet<String>,
     /// Running sum of `initial_balance` across every accepted
     /// `Open` block. Compared against
     /// [`arxia_core::TOTAL_SUPPLY_MICRO_ARX`] before each new Open
@@ -121,22 +129,22 @@ pub struct Ledger {
     /// open an account with a balance. See [`crate::issuance`].
     issuance: Option<IssuancePolicy>,
     /// Verified certificates, by account.
-    certificates: HashMap<String, IssuanceCertificate>,
+    certificates: BTreeMap<String, IssuanceCertificate>,
     /// Accounts that signed two blocks for one position, with the
     /// proof. See [`crate::equivocation`].
-    equivocations: HashMap<String, EquivocationProof>,
+    equivocations: BTreeMap<String, EquivocationProof>,
     /// Witnesses this ledger recognises, when it accepts reserve
     /// certificates. See [`crate::reserve`].
     roster: Option<WitnessRoster>,
     /// Verified reserve certificates, by reserve account.
-    reserves: HashMap<String, ReserveCertificate>,
+    reserves: BTreeMap<String, ReserveCertificate>,
     /// Owner accounts frozen because a reserve they funded was spent
     /// twice, with the first frozen position.
-    owner_freezes: HashMap<String, u64>,
+    owner_freezes: BTreeMap<String, u64>,
     /// Blocks known to be final under the roster, by hash, with the
     /// confirmations that prove it. A settled block is not subject to
     /// a freeze.
-    settlements: HashMap<String, Vec<WitnessConfirmation>>,
+    settlements: BTreeMap<String, Vec<WitnessConfirmation>>,
 }
 
 impl Ledger {
@@ -146,17 +154,17 @@ impl Ledger {
     /// with [`Ledger::with_issuance`].
     pub fn new() -> Self {
         Self {
-            chains: HashMap::new(),
-            send_index: HashMap::new(),
-            consumed_sends: HashSet::new(),
+            chains: BTreeMap::new(),
+            send_index: BTreeMap::new(),
+            consumed_sends: BTreeSet::new(),
             total_supply: 0,
             issuance: None,
-            certificates: HashMap::new(),
-            equivocations: HashMap::new(),
+            certificates: BTreeMap::new(),
+            equivocations: BTreeMap::new(),
             roster: None,
-            reserves: HashMap::new(),
-            owner_freezes: HashMap::new(),
-            settlements: HashMap::new(),
+            reserves: BTreeMap::new(),
+            owner_freezes: BTreeMap::new(),
+            settlements: BTreeMap::new(),
         }
     }
 

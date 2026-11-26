@@ -50,6 +50,14 @@ use crate::block::{Block, BlockType};
 use crate::serialization::{from_compact_bytes, to_compact_bytes};
 use crate::validation::verify_block;
 use crate::witness::{assess, WitnessConfirmation, WitnessRoster};
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use arxia_core::{ArxiaError, ReserveFault, WitnessFault};
 
 fn fault(fault: ReserveFault) -> ArxiaError {

@@ -19,6 +19,14 @@
 //! length error). Callers MUST handle the `Err` arm at compile time.
 
 use crate::block::{Block, BlockType};
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use arxia_core::{ArxiaError, BlockField, SignatureFault, COMPACT_BLOCK_SIZE};
 
 /// Decode a hex string into a fixed-size 32-byte array. Loud failure

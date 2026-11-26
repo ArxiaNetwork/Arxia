@@ -12,6 +12,14 @@
 //! documented at the `arxia_crypto::ed25519` module level.
 
 use crate::block::{Block, BlockType};
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use arxia_core::{ArxiaError, GenesisRule, KeyFault, SignatureFault};
 
 /// Verify a single block hash and Ed25519 signature.
