@@ -193,6 +193,36 @@ impl Settlement {
     }
 }
 
+/// The confirmations of `block` that [`assess`] counts under `roster`:
+/// one per roster witness other than the block's own account, each
+/// verified. This is the set worth keeping or passing on.
+///
+/// # Errors
+///
+/// As [`assess`].
+pub fn counted(
+    block: &Block,
+    confirmations: &[WitnessConfirmation],
+    roster: &WitnessRoster,
+) -> Result<Vec<WitnessConfirmation>, ArxiaError> {
+    verify_block(block)?;
+    let block_hash = hash_bytes(block)?;
+    let payer = key_bytes(&block.account);
+    let mut kept: Vec<WitnessConfirmation> = Vec::new();
+    for confirmation in confirmations {
+        if confirmation.block_hash != block_hash
+            || Some(confirmation.witness) == payer
+            || kept.iter().any(|held| held.witness == confirmation.witness)
+            || roster.weight_of(&confirmation.witness).is_none()
+            || !confirmation.verifies()
+        {
+            continue;
+        }
+        kept.push(confirmation.clone());
+    }
+    Ok(kept)
+}
+
 /// Count the confirmations of `block` under `roster`.
 ///
 /// # Errors

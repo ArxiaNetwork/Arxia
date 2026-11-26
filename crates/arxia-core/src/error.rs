@@ -568,6 +568,10 @@ pub enum WitnessFault {
         /// Total weight of the roster.
         total: u64,
     },
+    /// The ledger has no witness roster to count confirmations
+    /// against.
+    #[error("no witness roster is configured")]
+    NoRoster,
     /// The bytes do not decode into a confirmation, or a block hash is
     /// not 32 bytes of hex.
     #[error("the confirmation could not be decoded")]

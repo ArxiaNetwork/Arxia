@@ -141,5 +141,12 @@ pub fn receive_final<S: StorageBackend>(
             total: settlement.total_weight,
         }));
     }
+    // Keep the confirmations with the block, so that the payment stays
+    // acceptable, and can be shown to be final, if the payer is later
+    // found to have signed another block for the same position.
+    if wallet.wallet().ledger().witness_roster().is_some() {
+        wallet.ingest(send_block)?;
+        wallet.ingest_settlement(send_block, confirmations)?;
+    }
     wallet.receive(send_block)
 }

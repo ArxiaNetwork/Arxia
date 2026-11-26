@@ -40,7 +40,7 @@ use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::ledger::Ledger;
 use crate::reserve::ReserveCertificate;
 use crate::validation::verify_block;
-use crate::witness::WitnessRoster;
+use crate::witness::{WitnessConfirmation, WitnessRoster};
 use arxia_core::ArxiaError;
 
 /// What a wallet's ledger is configured with. Both parts are optional;
@@ -304,6 +304,20 @@ impl Wallet {
             });
         }
         self.ledger.add_block(block.clone())
+    }
+
+    /// Record that `block` is final under the witness roster. See
+    /// [`Ledger::add_settlement`].
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Ledger::add_settlement`].
+    pub fn ingest_settlement(
+        &mut self,
+        block: &Block,
+        confirmations: &[WitnessConfirmation],
+    ) -> Result<(), ArxiaError> {
+        self.ledger.add_settlement(block, confirmations)
     }
 
     /// Accept an equivocation proof from another device and freeze the
