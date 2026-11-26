@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Settled blocks: `Ledger::add_settlement` records a block as final under the witness roster and keeps the confirmations. A settled block is exempt from the freeze that follows an equivocation, so the party that was paid, and whoever it pays next, are not affected by what the payer signs afterwards. `receive_final` keeps the confirmations of what it credits, bundles carry them, and `DurableWallet` stores them.
+
 - Bundles (`arxia_lattice::bundle`): the frame format one device hands to another. A payment travels as issuance certificates, history blocks and the payment block, each frame at most 238 bytes so that it fits one LoRa packet. `DurableWallet::payment_bundle` builds a bundle, `ingest_bundle` replays one under the ledger rules, and `history` returns the stored blocks in acceptance order.
 - `examples/offline_settlement`: the settlement rules end to end between separate operating-system processes. Each run is one device doing one thing (signing, witnessing, receiving) on its own redb database; devices exchange only files of frames. Its tests settle two payments in a row and show that a restored copy of a wallet cannot pay a second time. It is a demonstration, not the node.
 

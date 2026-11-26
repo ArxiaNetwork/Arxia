@@ -73,8 +73,10 @@ use crate::equivocation::EquivocationProof;
 use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::reserve::ReserveCertificate;
 use crate::validation::verify_block;
-use crate::witness::WitnessRoster;
-use arxia_core::{ArxiaError, EquivocationFault, GenesisRule, IssuanceFault, ReserveFault};
+use crate::witness::{assess, counted, WitnessConfirmation, WitnessRoster};
+use arxia_core::{
+    ArxiaError, EquivocationFault, GenesisRule, IssuanceFault, ReserveFault, WitnessFault,
+};
 use std::collections::{HashMap, HashSet};
 
 /// Compact summary of an accepted `Send` block, kept in
@@ -130,6 +132,10 @@ pub struct Ledger {
     /// Owner accounts frozen because a reserve they funded was spent
     /// twice, with the first frozen position.
     owner_freezes: HashMap<String, u64>,
+    /// Blocks known to be final under the roster, by hash, with the
+    /// confirmations that prove it. A settled block is not subject to
+    /// a freeze.
+    settlements: HashMap<String, Vec<WitnessConfirmation>>,
 }
 
 impl Ledger {
@@ -149,7 +155,61 @@ impl Ledger {
             roster: None,
             reserves: HashMap::new(),
             owner_freezes: HashMap::new(),
+            settlements: HashMap::new(),
         }
+    }
+
+    /// Record that `block` is final: its confirmations hold more than
+    /// two thirds of the roster weight. The confirmations that count
+    /// are kept, so they can be passed on with the block.
+    ///
+    /// A settled block is exempt from the freeze that follows an
+    /// equivocation: it stays acceptable to [`Ledger::add_block`], and
+    /// if it is a SEND it stays receivable. The witnesses decided for
+    /// this block; a second block signed for the same position does
+    /// not undo that for the party that was paid.
+    ///
+    /// The block itself does not need to be in the ledger yet.
+    ///
+    /// # Errors
+    ///
+    /// - [`WitnessFault::NoRoster`] if no roster is set.
+    /// - [`WitnessFault::NotFinal`] if the confirmations do not reach
+    ///   finality.
+    pub fn add_settlement(
+        &mut self,
+        block: &Block,
+        confirmations: &[WitnessConfirmation],
+    ) -> Result<(), ArxiaError> {
+        let roster = self.roster.as_ref().ok_or(ArxiaError::Witness {
+            fault: WitnessFault::NoRoster,
+        })?;
+        let settlement = assess(block, confirmations, roster)?;
+        if !settlement.is_final() {
+            return Err(ArxiaError::Witness {
+                fault: WitnessFault::NotFinal {
+                    confirmed: settlement.confirmed_weight,
+                    total: settlement.total_weight,
+                },
+            });
+        }
+        let kept = counted(block, confirmations, roster)?;
+        self.settlements.insert(block.hash.clone(), kept);
+        Ok(())
+    }
+
+    /// The confirmations that settled the block with this hash, if it
+    /// is settled.
+    pub fn settlement_for(&self, block_hash: &str) -> Option<&[WitnessConfirmation]> {
+        self.settlements.get(block_hash).map(Vec::as_slice)
+    }
+
+    /// Every settlement this ledger holds: block hash and
+    /// confirmations.
+    pub fn settlements(&self) -> impl Iterator<Item = (&str, &[WitnessConfirmation])> {
+        self.settlements
+            .iter()
+            .map(|(hash, confirmations)| (hash.as_str(), confirmations.as_slice()))
     }
 
     /// Set the witnesses this ledger recognises. Required before
@@ -428,8 +488,11 @@ impl Ledger {
                         return Err(ArxiaError::WrongDestination);
                     }
                     // A SEND in the frozen part of an account that
-                    // equivocated can no longer be received.
-                    self.check_not_frozen(&send_info.account, send_info.nonce)?;
+                    // equivocated can no longer be received, unless
+                    // the witnesses settled it.
+                    if !self.settlements.contains_key(source_hash) {
+                        self.check_not_frozen(&send_info.account, send_info.nonce)?;
+                    }
                     credited_amount = send_info.amount;
                 }
                 None => {
@@ -450,8 +513,11 @@ impl Ledger {
         }
 
         // Nothing new is accepted from an account at or after the
-        // position where it signed two blocks.
-        self.check_not_frozen(&block.account, block.nonce)?;
+        // position where it signed two blocks, except a block the
+        // witnesses settled.
+        if !self.settlements.contains_key(&block.hash) {
+            self.check_not_frozen(&block.account, block.nonce)?;
+        }
 
         let chain = self.chains.entry(block.account.clone()).or_default();
 

@@ -41,6 +41,8 @@
 //!   equivocation proof, one record each.
 //! - `w/r/<reserve account, 32 bytes><index>`: the records of a
 //!   reserve certificate, when the wallet has a witness roster.
+//! - `w/s/<block hash, 32 bytes><index>`: the confirmations that
+//!   settled a block, one record each.
 //!
 //! All of them fit the limits of the flash backend.
 //!
@@ -57,6 +59,7 @@ use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::reserve::ReserveCertificate;
 use crate::serialization::{from_compact_bytes, to_compact_bytes};
 use crate::wallet::{Wallet, WalletConfig};
+use crate::witness::WitnessConfirmation;
 use arxia_core::{ArxiaError, StorageFault};
 use arxia_storage::{BatchOp, StorageBackend};
 
@@ -65,6 +68,7 @@ const BLOCK_PREFIX: &[u8] = b"w/b/";
 const ISSUANCE_PREFIX: &[u8] = b"w/i/";
 const EQUIVOCATION_PREFIX: &[u8] = b"w/e/";
 const RESERVE_PREFIX: &[u8] = b"w/r/";
+const SETTLEMENT_PREFIX: &[u8] = b"w/s/";
 
 /// A [`Wallet`] persisted through a storage backend.
 pub struct DurableWallet<S: StorageBackend> {
@@ -150,6 +154,10 @@ impl<S: StorageBackend> DurableWallet<S> {
             .map(|record| from_compact_bytes(record).map_err(|_| undecodable()))
             .collect::<Result<Vec<Block>, ArxiaError>>()?;
         let stored_blocks = blocks.len() as u64;
+        let by_hash: std::collections::HashMap<String, Block> = blocks
+            .iter()
+            .map(|block| (block.hash.clone(), block.clone()))
+            .collect();
         let issuance = if config.issuance.is_some() {
             let mut records: Vec<Vec<u8>> = Vec::new();
             storage.scan_prefix(ISSUANCE_PREFIX, &mut |_key, value| {
@@ -185,6 +193,33 @@ impl<S: StorageBackend> DurableWallet<S> {
             Vec::new()
         };
         let mut wallet = Wallet::restore_with_config(&seed, config, &issuance, &reserves, blocks)?;
+
+        // Settlements are restored after the replay, where the blocks
+        // they name are known, and before the proofs.
+        if wallet.ledger().witness_roster().is_some() {
+            let mut grouped: Vec<(Vec<u8>, Vec<Vec<u8>>)> = Vec::new();
+            storage.scan_prefix(SETTLEMENT_PREFIX, &mut |key, value| {
+                let hash = key[SETTLEMENT_PREFIX.len()..key.len().saturating_sub(1)].to_vec();
+                match grouped.last_mut() {
+                    Some((held, records)) if *held == hash => records.push(value.to_vec()),
+                    _ => grouped.push((hash, vec![value.to_vec()])),
+                }
+                true
+            })?;
+            for (hash, records) in &grouped {
+                let hash = hex::encode(hash);
+                let Some(block) = by_hash.get(&hash) else {
+                    continue;
+                };
+                let confirmations = records
+                    .iter()
+                    .map(|record| {
+                        WitnessConfirmation::from_bytes(record).map_err(|_| undecodable())
+                    })
+                    .collect::<Result<Vec<_>, ArxiaError>>()?;
+                wallet.ingest_settlement(block, &confirmations)?;
+            }
+        }
 
         // Proofs are applied after the replay: the blocks an account
         // signed before it was frozen were accepted at the time and
@@ -394,6 +429,51 @@ impl<S: StorageBackend> DurableWallet<S> {
         self.ingest_reserve(certificate)?;
         self.ingest_all(spends)?;
         self.receive(payment)
+    }
+
+    /// Record that `block` is final under the witness roster and make
+    /// the confirmations durable. See [`Ledger::add_settlement`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Wallet::ingest_settlement`], plus any backend error.
+    ///
+    /// [`Ledger::add_settlement`]: crate::Ledger::add_settlement
+    pub fn ingest_settlement(
+        &mut self,
+        block: &Block,
+        confirmations: &[WitnessConfirmation],
+    ) -> Result<(), ArxiaError> {
+        self.ready()?;
+        self.wallet.ingest_settlement(block, confirmations)?;
+        let outcome = (|| {
+            let hash = hex::decode(&block.hash).map_err(ArxiaError::HexDecode)?;
+            let kept = self
+                .wallet
+                .ledger()
+                .settlement_for(&block.hash)
+                .unwrap_or_default();
+            let entries: Vec<(Vec<u8>, [u8; 128])> = kept
+                .iter()
+                .enumerate()
+                .map(|(index, confirmation)| {
+                    let mut key = SETTLEMENT_PREFIX.to_vec();
+                    key.extend_from_slice(&hash);
+                    // At most one confirmation per roster witness.
+                    key.push(index as u8);
+                    (key, confirmation.to_bytes())
+                })
+                .collect();
+            let batch: Vec<BatchOp<'_>> = entries
+                .iter()
+                .map(|(key, value)| BatchOp::Put { key, value })
+                .collect();
+            self.storage.apply_batch(&batch)
+        })();
+        if outcome.is_err() {
+            self.reopen_required = true;
+        }
+        outcome
     }
 
     /// Accept an equivocation proof from another device and make it

@@ -176,6 +176,16 @@ impl<S: StorageBackend> DurableWallet<S> {
                 .filter(|block| block.hash != payment.hash)
                 .map(Frame::Block),
         );
+        // Confirmations of the settled blocks in that history, so that
+        // a receiver who has since learned of an equivocation still
+        // accepts what the witnesses decided.
+        frames.extend(
+            self.wallet()
+                .ledger()
+                .settlements()
+                .flat_map(|(_hash, confirmations)| confirmations.iter().cloned())
+                .map(Frame::Confirmation),
+        );
         frames.push(Frame::Payment(payment.clone()));
         Ok(frames)
     }
@@ -196,13 +206,32 @@ impl<S: StorageBackend> DurableWallet<S> {
         frames: &[Frame],
     ) -> Result<(Block, Vec<WitnessConfirmation>), ArxiaError> {
         let mut payments = Vec::new();
-        let mut confirmations = Vec::new();
+        let confirmations: Vec<WitnessConfirmation> = frames
+            .iter()
+            .filter_map(|frame| match frame {
+                Frame::Confirmation(confirmation) => Some(confirmation.clone()),
+                _ => None,
+            })
+            .collect();
+        let has_roster = self.wallet().ledger().witness_roster().is_some();
         for frame in frames {
             match frame {
                 Frame::Issuance(certificate) => self.ingest_issuance(certificate)?,
-                Frame::Block(block) => self.ingest(block)?,
+                Frame::Block(block) => {
+                    // If the bundle proves the block final, record that
+                    // first: a settled block is accepted even where the
+                    // account is frozen. A block that is not final is
+                    // simply ingested under the ordinary rules.
+                    if has_roster && !confirmations.is_empty() {
+                        match self.ingest_settlement(block, &confirmations) {
+                            Ok(()) | Err(ArxiaError::Witness { .. }) => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    self.ingest(block)?;
+                }
                 Frame::Payment(block) => payments.push(block.clone()),
-                Frame::Confirmation(confirmation) => confirmations.push(confirmation.clone()),
+                Frame::Confirmation(_) => {}
             }
         }
         match <[Block; 1]>::try_from(payments) {
