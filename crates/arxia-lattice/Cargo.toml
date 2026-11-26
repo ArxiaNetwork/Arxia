@@ -43,3 +43,4 @@ std = [
 [dev-dependencies]
 arxia-storage-redb = { workspace = true }
 tempfile = { workspace = true }
+arxia-storage-flash = { path = "../arxia-storage-flash", features = ["testing"] }
