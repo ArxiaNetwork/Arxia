@@ -234,11 +234,10 @@ impl<S: StorageBackend> DurableWallet<S> {
         } else {
             Vec::new()
         };
-        let mut wallet = Wallet::restore_with_config(&seed, config, &issuance, &reserves, blocks)?;
-
-        // Settlements are restored after the replay, where the blocks
-        // they name are known, and before the proofs.
-        if wallet.ledger().witness_roster().is_some() {
+        // Settlements are loaded before the replay: a settled block
+        // may be the first one held for its account.
+        let mut settlements: Vec<(Block, Vec<WitnessConfirmation>)> = Vec::new();
+        if config.witnesses.is_some() {
             let mut grouped: Vec<(Vec<u8>, Vec<Vec<u8>>)> = Vec::new();
             storage.scan_prefix(SETTLEMENT_PREFIX, &mut |key, value| {
                 let hash = key[SETTLEMENT_PREFIX.len()..key.len().saturating_sub(1)].to_vec();
@@ -249,8 +248,7 @@ impl<S: StorageBackend> DurableWallet<S> {
                 true
             })?;
             for (hash, records) in &grouped {
-                let hash = hex::encode(hash);
-                let Some(block) = by_hash.get(&hash) else {
+                let Some(block) = by_hash.get(&hex::encode(hash)) else {
                     continue;
                 };
                 let confirmations = records
@@ -259,9 +257,11 @@ impl<S: StorageBackend> DurableWallet<S> {
                         WitnessConfirmation::from_bytes(record).map_err(|_| undecodable())
                     })
                     .collect::<Result<Vec<_>, ArxiaError>>()?;
-                wallet.ingest_settlement(block, &confirmations)?;
+                settlements.push((block.clone(), confirmations));
             }
         }
+        let mut wallet =
+            Wallet::restore_with_config(&seed, config, &issuance, &reserves, &settlements, blocks)?;
 
         // Proofs are applied after the replay: the blocks an account
         // signed before it was frozen were accepted at the time and
@@ -570,11 +570,13 @@ impl<S: StorageBackend> DurableWallet<S> {
 
     /// Whether the ledger already holds exactly this block.
     fn holds(&self, block: &Block) -> bool {
-        usize::try_from(block.nonce)
-            .ok()
-            .and_then(|nonce| nonce.checked_sub(1))
-            .and_then(|index| self.wallet.ledger().get_chain(&block.account)?.get(index))
-            .is_some_and(|known| known.hash == block.hash)
+        let ledger = self.wallet.ledger();
+        // A block older than the settled one the ledger starts that
+        // account from is superseded: nothing to store for it.
+        ledger.covers(block)
+            || ledger
+                .block_at(&block.account, block.nonce)
+                .is_some_and(|known| known.hash == block.hash)
     }
 
     /// Write the proof the ledger holds for `account`, both blocks in

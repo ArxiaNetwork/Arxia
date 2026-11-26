@@ -235,9 +235,12 @@ impl Ledger {
         if !self.settlements.contains_key(&block.hash) {
             return refuse(EquivocationFault::NotAConflict);
         }
-        let index = usize::try_from(block.nonce)
-            .ok()
-            .and_then(|nonce| nonce.checked_sub(1));
+        let index = self
+            .chains
+            .get(&block.account)
+            .and_then(|chain| chain.first())
+            .and_then(|first| block.nonce.checked_sub(first.nonce))
+            .and_then(|offset| usize::try_from(offset).ok());
         let tail: Vec<Block> = match (index, self.chains.get(&block.account)) {
             (Some(index), Some(chain)) if index < chain.len() => chain[index..].to_vec(),
             _ => return refuse(EquivocationFault::NotAConflict),
@@ -537,6 +540,26 @@ impl Ledger {
     pub fn add_block(&mut self, block: Block) -> Result<(), ArxiaError> {
         verify_block(&block)?;
 
+        // A block the witnesses settled can start an account's chain
+        // in this ledger, or carry it forward over blocks this ledger
+        // never saw. The witnesses replayed what precedes it; their
+        // confirmations stand for that history, and the balance the
+        // block states is taken as the starting balance.
+        if block.nonce > 1 && self.settlements.contains_key(&block.hash) {
+            let last_held = self
+                .chains
+                .get(&block.account)
+                .and_then(|chain| chain.last())
+                .map(|held| held.nonce);
+            let starts = match last_held {
+                None => true,
+                Some(last) => block.nonce > last.saturating_add(1),
+            };
+            if starts {
+                return self.start_from_settled(block);
+            }
+        }
+
         // Open blocks must not push the cumulative supply past the
         // protocol-wide ceiling. See module docstring (Global supply
         // ceiling). Checked here, before any chain mutation, so a
@@ -783,6 +806,70 @@ impl Ledger {
 
         chain.push(block);
         Ok(())
+    }
+
+    /// Take `block`, which is settled, as the first block this ledger
+    /// holds for its account. Earlier blocks of that account held here,
+    /// if any, are dropped: the settled block supersedes them.
+    fn start_from_settled(&mut self, block: Block) -> Result<(), ArxiaError> {
+        match &block.block_type {
+            BlockType::Open { .. } => {
+                return Err(ArxiaError::OpenNotGenesis {
+                    account: block.account.clone(),
+                });
+            }
+            BlockType::Send {
+                destination,
+                amount,
+            } => {
+                if !self.consumed_sends.contains(&block.hash) {
+                    self.send_index.insert(
+                        block.hash.clone(),
+                        SendInfo {
+                            destination: destination.clone(),
+                            amount: *amount,
+                            account: block.account.clone(),
+                            nonce: block.nonce,
+                        },
+                    );
+                }
+            }
+            BlockType::Receive { source_hash } => {
+                self.send_index.remove(source_hash);
+                self.consumed_sends.insert(source_hash.clone());
+            }
+            BlockType::Revoke { .. } => {}
+        }
+        self.chains.insert(block.account.clone(), vec![block]);
+        Ok(())
+    }
+
+    /// The block held for `account` at position `nonce`, if any. A
+    /// chain may start at a settled block rather than at position 1,
+    /// so positions are not vector indices.
+    pub fn block_at(&self, account: &str, nonce: u64) -> Option<&Block> {
+        let chain = self.chains.get(account)?;
+        let first = chain.first()?.nonce;
+        let index = usize::try_from(nonce.checked_sub(first)?).ok()?;
+        chain.get(index)
+    }
+
+    /// Whether `block` lies before the first block held for its
+    /// account: the ledger started that chain at a later, settled
+    /// block, which supersedes it.
+    pub fn covers(&self, block: &Block) -> bool {
+        self.chains
+            .get(&block.account)
+            .and_then(|chain| chain.first())
+            .is_some_and(|first| block.nonce < first.nonce)
+    }
+
+    /// The block with this hash, if the ledger holds it.
+    pub fn find_block(&self, hash: &str) -> Option<&Block> {
+        self.chains
+            .values()
+            .flatten()
+            .find(|block| block.hash == hash)
     }
 
     /// Get the chain for a specific account.
