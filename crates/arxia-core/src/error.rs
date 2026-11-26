@@ -506,6 +506,10 @@ pub enum EquivocationFault {
         /// First frozen account position.
         from_nonce: u64,
     },
+    /// The block held at a position cannot give way to the settled
+    /// one: it is settled itself, or something already depends on it.
+    #[error("the held block cannot be replaced")]
+    CannotReplace,
     /// The bytes do not decode into two compact blocks.
     #[error("the proof could not be decoded")]
     Undecodable,

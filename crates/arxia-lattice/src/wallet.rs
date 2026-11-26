@@ -72,6 +72,10 @@ pub struct Wallet {
     account: AccountChain,
     ledger: Ledger,
     vclock: VectorClock,
+    /// Blocks removed from the ledger when it followed the witnesses
+    /// to a settled block, not yet collected by
+    /// [`Wallet::take_replaced`].
+    replaced: Vec<Block>,
 }
 
 /// Account-side state captured before an operation, restored if the
@@ -91,6 +95,7 @@ impl Wallet {
             account: AccountChain::new(),
             ledger: Ledger::new(),
             vclock: VectorClock::new(),
+            replaced: Vec::new(),
         }
     }
 
@@ -101,6 +106,7 @@ impl Wallet {
             account: AccountChain::new(),
             ledger: Ledger::with_issuance(policy),
             vclock: VectorClock::new(),
+            replaced: Vec::new(),
         }
     }
 
@@ -111,6 +117,7 @@ impl Wallet {
             account: AccountChain::new(),
             ledger: config.ledger(),
             vclock: VectorClock::new(),
+            replaced: Vec::new(),
         }
     }
 
@@ -192,6 +199,7 @@ impl Wallet {
             account,
             ledger,
             vclock: VectorClock::new(),
+            replaced: Vec::new(),
         })
     }
 
@@ -283,7 +291,9 @@ impl Wallet {
     ///   authentic block at the same account position. Both blocks
     ///   carry the account's signature: the pair is kept as an
     ///   [`EquivocationProof`] and the account is frozen from that
-    ///   position (see [`crate::equivocation`]).
+    ///   position (see [`crate::equivocation`]). The exception is an
+    ///   incoming block the witnesses settled: the ledger then takes
+    ///   it in place of the held one and this returns `Ok`.
     /// - Any error of [`Ledger::add_block`] otherwise.
     pub fn ingest(&mut self, block: &Block) -> Result<(), ArxiaError> {
         let known = usize::try_from(block.nonce)
@@ -297,6 +307,18 @@ impl Wallet {
             }
             let proof = EquivocationProof::new(known.clone(), block.clone())?;
             self.ledger.add_equivocation(&proof)?;
+            // If the witnesses settled the incoming block, follow them
+            // and let the held one go, where that is safe. A wallet
+            // never does this to its own account: it only signs on
+            // top of what it signed.
+            if block.account != self.account.id()
+                && self.ledger.settlement_for(&block.hash).is_some()
+            {
+                if let Ok(removed) = self.ledger.replace_with_settled(block) {
+                    self.replaced.extend(removed);
+                    return Ok(());
+                }
+            }
             return Err(ArxiaError::NonceConflict {
                 account: block.account.clone(),
                 nonce: block.nonce,
@@ -304,6 +326,14 @@ impl Wallet {
             });
         }
         self.ledger.add_block(block.clone())
+    }
+
+    /// Collect the blocks the ledger removed when it replaced an
+    /// unsettled block by the settled one (see
+    /// [`Ledger::replace_with_settled`]). A caller that mirrors the
+    /// ledger elsewhere removes them there too.
+    pub fn take_replaced(&mut self) -> Vec<Block> {
+        std::mem::take(&mut self.replaced)
     }
 
     /// Record that `block` is final under the witness roster. See

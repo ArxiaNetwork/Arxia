@@ -97,6 +97,7 @@ struct SendInfo {
 }
 
 /// Global ledger index of all account chains.
+#[derive(Clone)]
 pub struct Ledger {
     /// Map from account hex public key to block list.
     pub chains: HashMap<String, Vec<Block>>,
@@ -196,6 +197,104 @@ impl Ledger {
         let kept = counted(block, confirmations, roster)?;
         self.settlements.insert(block.hash.clone(), kept);
         Ok(())
+    }
+
+    /// Replace the block held at `block`'s account position with
+    /// `block`, which the witnesses settled.
+    ///
+    /// When an account signs two blocks for one position, a ledger may
+    /// have taken in the one that did not become final. This lets it
+    /// follow the witnesses: the held block and whatever the account
+    /// built on it are removed, and the settled block takes the
+    /// position under the ordinary rules.
+    ///
+    /// Nothing is replaced unless it is safe. The call fails, and the
+    /// ledger is left exactly as it was, if any block to remove is
+    /// itself settled, or is a SEND that was already received.
+    ///
+    /// Returns the removed blocks, oldest first; empty if `block` is
+    /// already the one held.
+    ///
+    /// # Errors
+    ///
+    /// - [`EquivocationFault::NotAConflict`] if `block` is not settled
+    ///   or the ledger holds nothing at that position.
+    /// - [`EquivocationFault::CannotReplace`] if a block to remove is
+    ///   settled or already received.
+    /// - Any error of [`Ledger::add_block`] for `block` itself.
+    pub fn replace_with_settled(&mut self, block: &Block) -> Result<Vec<Block>, ArxiaError> {
+        let refuse = |fault| Err(ArxiaError::Equivocation { fault });
+        if !self.settlements.contains_key(&block.hash) {
+            return refuse(EquivocationFault::NotAConflict);
+        }
+        let index = usize::try_from(block.nonce)
+            .ok()
+            .and_then(|nonce| nonce.checked_sub(1));
+        let tail: Vec<Block> = match (index, self.chains.get(&block.account)) {
+            (Some(index), Some(chain)) if index < chain.len() => chain[index..].to_vec(),
+            _ => return refuse(EquivocationFault::NotAConflict),
+        };
+        if tail[0].hash == block.hash {
+            return Ok(Vec::new());
+        }
+        let depended_on = tail.iter().any(|held| {
+            self.settlements.contains_key(&held.hash) || self.consumed_sends.contains(&held.hash)
+        });
+        if depended_on {
+            return refuse(EquivocationFault::CannotReplace);
+        }
+
+        let snapshot = self.clone();
+        for held in &tail {
+            match &held.block_type {
+                BlockType::Send { .. } => {
+                    self.send_index.remove(&held.hash);
+                }
+                BlockType::Receive { source_hash } => {
+                    // The source is free to be received again.
+                    self.consumed_sends.remove(source_hash);
+                    let source = self
+                        .chains
+                        .values()
+                        .flatten()
+                        .find(|candidate| candidate.hash == *source_hash)
+                        .cloned();
+                    if let Some(Block {
+                        account,
+                        nonce,
+                        block_type:
+                            BlockType::Send {
+                                destination,
+                                amount,
+                            },
+                        ..
+                    }) = source
+                    {
+                        self.send_index.insert(
+                            source_hash.clone(),
+                            SendInfo {
+                                destination,
+                                amount,
+                                account,
+                                nonce,
+                            },
+                        );
+                    }
+                }
+                BlockType::Open { initial_balance } => {
+                    self.total_supply = self.total_supply.saturating_sub(*initial_balance);
+                }
+                BlockType::Revoke { .. } => {}
+            }
+        }
+        if let (Some(index), Some(chain)) = (index, self.chains.get_mut(&block.account)) {
+            chain.truncate(index);
+        }
+        if let Err(error) = self.add_block(block.clone()) {
+            *self = snapshot;
+            return Err(error);
+        }
+        Ok(tail)
     }
 
     /// The confirmations that settled the block with this hash, if it
