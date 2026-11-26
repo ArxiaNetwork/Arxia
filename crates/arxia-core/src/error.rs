@@ -206,6 +206,13 @@ pub enum ArxiaError {
         fault: StorageFault,
     },
 
+    /// An issuance policy or certificate was refused.
+    #[error("issuance error: {fault}")]
+    Issuance {
+        /// The specific issuance fault.
+        fault: IssuanceFault,
+    },
+
     /// Attempt to Open an account that already has blocks in its chain.
     #[error("account already open: chain is not empty")]
     AccountAlreadyOpen,
@@ -454,6 +461,49 @@ pub enum DidFault {
         /// The byte count the DID scheme requires.
         expected: usize,
     },
+}
+
+/// The specific fault behind an [`ArxiaError::Issuance`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum IssuanceFault {
+    /// The policy itself is malformed: threshold of zero or above the
+    /// number of issuers, too many issuers, or a repeated key.
+    #[error("the issuance policy is malformed")]
+    PolicyInvalid,
+    /// The ledger has an issuance policy and no certificate for the
+    /// account that opens with a balance.
+    #[error("no issuance certificate for this account")]
+    MissingCertificate,
+    /// The opening balance differs from the certified amount.
+    #[error("opening balance {opened} differs from the certified amount {certified}")]
+    AmountMismatch {
+        /// The amount the certificate states.
+        certified: u64,
+        /// The balance the Open block states.
+        opened: u64,
+    },
+    /// Fewer valid signatures from distinct issuers than the policy
+    /// requires.
+    #[error("{valid} valid issuer signatures, {required} required")]
+    InsufficientSignatures {
+        /// Valid signatures from distinct issuers.
+        valid: usize,
+        /// The policy threshold.
+        required: usize,
+    },
+    /// The ledger already holds a certificate for this account with a
+    /// different amount.
+    #[error("a certificate with a different amount exists for this account")]
+    ConflictingCertificate,
+    /// The signing key is not one of the policy's issuers.
+    #[error("the key is not an issuer of this policy")]
+    UnknownIssuer,
+    /// The certificate cannot hold another signature.
+    #[error("the certificate is full")]
+    TooManySignatures,
+    /// The bytes do not decode into a certificate.
+    #[error("the certificate could not be decoded")]
+    Undecodable,
 }
 
 /// The specific fault behind an [`ArxiaError::Storage`].

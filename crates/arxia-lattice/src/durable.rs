@@ -34,8 +34,10 @@
 //! - `w/k`: the 32-byte signing seed.
 //! - `w/b/<sequence, 8 bytes big-endian>`: one block in the 193-byte
 //!   compact form, in acceptance order.
+//! - `w/i/<account, 32 bytes>`: the issuance certificate held for an
+//!   account, when the wallet runs under an issuance policy.
 //!
-//! Both fit the limits of the flash backend.
+//! All three fit the limits of the flash backend.
 //!
 //! # Scope
 //!
@@ -45,6 +47,7 @@
 //! confirmations from other nodes, not by local persistence.
 
 use crate::block::Block;
+use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::serialization::{from_compact_bytes, to_compact_bytes};
 use crate::wallet::Wallet;
 use arxia_core::{ArxiaError, StorageFault};
@@ -52,6 +55,7 @@ use arxia_storage::StorageBackend;
 
 const SEED_KEY: &[u8] = b"w/k";
 const BLOCK_PREFIX: &[u8] = b"w/b/";
+const ISSUANCE_PREFIX: &[u8] = b"w/i/";
 
 /// A [`Wallet`] persisted through a storage backend.
 pub struct DurableWallet<S: StorageBackend> {
@@ -85,7 +89,24 @@ impl<S: StorageBackend> DurableWallet<S> {
     ///   record does not decode.
     /// - Any ledger error if a stored block is refused on replay.
     /// - Any backend error.
-    pub fn open(mut storage: S) -> Result<Self, ArxiaError> {
+    pub fn open(storage: S) -> Result<Self, ArxiaError> {
+        Self::open_inner(storage, None)
+    }
+
+    /// As [`DurableWallet::open`], under an issuance policy. Stored
+    /// certificates are verified against `policy` before the blocks
+    /// are replayed. The policy is configuration: it is supplied on
+    /// every open and is not read from storage.
+    ///
+    /// # Errors
+    ///
+    /// As [`DurableWallet::open`], plus any issuance error for a
+    /// stored certificate the policy refuses.
+    pub fn open_with_issuance(storage: S, policy: IssuancePolicy) -> Result<Self, ArxiaError> {
+        Self::open_inner(storage, Some(policy))
+    }
+
+    fn open_inner(mut storage: S, policy: Option<IssuancePolicy>) -> Result<Self, ArxiaError> {
         let seed = match storage.get(SEED_KEY)? {
             Some(bytes) => <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| undecodable())?,
             None => {
@@ -105,7 +126,23 @@ impl<S: StorageBackend> DurableWallet<S> {
             .map(|record| from_compact_bytes(record).map_err(|_| undecodable()))
             .collect::<Result<Vec<Block>, ArxiaError>>()?;
         let stored_blocks = blocks.len() as u64;
-        let wallet = Wallet::restore(&seed, blocks)?;
+        let wallet = match policy {
+            None => Wallet::restore(&seed, blocks)?,
+            Some(policy) => {
+                let mut records: Vec<Vec<u8>> = Vec::new();
+                storage.scan_prefix(ISSUANCE_PREFIX, &mut |_key, value| {
+                    records.push(value.to_vec());
+                    true
+                })?;
+                let certificates = records
+                    .iter()
+                    .map(|record| {
+                        IssuanceCertificate::from_bytes(record).map_err(|_| undecodable())
+                    })
+                    .collect::<Result<Vec<_>, ArxiaError>>()?;
+                Wallet::restore_with_issuance(&seed, policy, &certificates, blocks)?
+            }
+        };
 
         Ok(Self {
             wallet,
@@ -150,6 +187,43 @@ impl<S: StorageBackend> DurableWallet<S> {
         let block = self.wallet.open(initial_balance)?;
         self.persist(&block)?;
         Ok(block)
+    }
+
+    /// Open the account with the balance a certificate states. The
+    /// certificate and the block are durable before the block is
+    /// returned.
+    ///
+    /// # Errors
+    ///
+    /// As [`Wallet::open_certified`], plus any backend error.
+    pub fn open_certified(
+        &mut self,
+        certificate: &IssuanceCertificate,
+    ) -> Result<Block, ArxiaError> {
+        self.ingest_issuance(certificate)?;
+        self.open_account(certificate.amount())
+    }
+
+    /// Accept an issuance certificate from another device and make it
+    /// durable.
+    ///
+    /// # Errors
+    ///
+    /// As [`Wallet::ingest_issuance`], plus any backend error.
+    pub fn ingest_issuance(&mut self, certificate: &IssuanceCertificate) -> Result<(), ArxiaError> {
+        self.ready()?;
+        self.wallet.ingest_issuance(certificate)?;
+        if self.wallet.ledger().issuance_policy().is_none() {
+            return Ok(());
+        }
+        let record = certificate.to_bytes();
+        let mut key = ISSUANCE_PREFIX.to_vec();
+        key.extend_from_slice(&record[..32]);
+        if let Err(error) = self.storage.put(&key, &record) {
+            self.reopen_required = true;
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Sign a SEND. The block is durable before it is returned.
