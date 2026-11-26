@@ -40,6 +40,14 @@ use crate::issuance::IssuanceCertificate;
 use crate::reserve::ReserveCertificate;
 use crate::serialization::{from_compact_bytes, to_compact_bytes};
 use crate::witness::{counted, WitnessConfirmation};
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use arxia_core::{ArxiaError, BundleFault};
 use arxia_storage::StorageBackend;
 

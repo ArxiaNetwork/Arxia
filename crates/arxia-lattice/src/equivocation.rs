@@ -32,6 +32,14 @@
 use crate::block::Block;
 use crate::serialization::{from_compact_bytes, to_compact_bytes};
 use crate::validation::verify_block;
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use arxia_core::constants::COMPACT_BLOCK_SIZE;
 use arxia_core::{ArxiaError, EquivocationFault};
 

@@ -1,9 +1,19 @@
 //! AccountChain manages a single account block chain and keypair.
 
+use alloc::collections::{BTreeMap, BTreeSet};
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+#[cfg(feature = "std")]
 use ed25519_dalek::rand_core::UnwrapErr;
 use ed25519_dalek::{Signer, SigningKey};
+#[cfg(feature = "std")]
 use rand::rngs::SysRng;
-use std::collections::{BTreeMap, HashSet};
 
 use crate::block::{Block, BlockType};
 use arxia_core::ArxiaError;
@@ -118,11 +128,43 @@ pub struct AccountChain {
     pub nonce: u64,
     /// Hashes of SEND blocks already consumed by `receive`. Prevents
     /// replaying the same SEND to mint the balance multiple times.
-    pub consumed_sources: HashSet<String>,
+    pub consumed_sources: BTreeSet<String>,
+    /// Source of block timestamps, in milliseconds since the UNIX
+    /// epoch. See [`AccountChain::set_clock`].
+    clock: fn() -> u64,
+}
+
+/// The wall clock where there is one. A build without `std` has no
+/// clock of its own and stamps zero until one is installed.
+fn default_clock() -> u64 {
+    #[cfg(feature = "std")]
+    {
+        arxia_core::now_millis()
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        0
+    }
 }
 
 impl AccountChain {
+    /// Create an account for the keypair of a 32-byte signing seed, with
+    /// no block yet. This is the constructor for targets without an
+    /// operating system: the caller obtains the seed from its own
+    /// entropy source.
+    pub fn from_seed(seed: &[u8; 32]) -> Self {
+        Self::from_validated(seed, &[])
+    }
+
+    /// Install the source of block timestamps. Timestamps are part of
+    /// what is signed but decide nothing; a device with a clock (GPS,
+    /// RTC) installs it here.
+    pub fn set_clock(&mut self, clock: fn() -> u64) {
+        self.clock = clock;
+    }
+
     /// Create a new account with a fresh Ed25519 keypair.
+    #[cfg(feature = "std")]
     pub fn new() -> Self {
         let signing_key = SigningKey::generate(&mut UnwrapErr(SysRng));
         let verifying_key = signing_key.verifying_key();
@@ -134,7 +176,8 @@ impl AccountChain {
             chain: Vec::new(),
             balance: 0,
             nonce: 0,
-            consumed_sources: HashSet::new(),
+            consumed_sources: BTreeSet::new(),
+            clock: default_clock,
         }
     }
 
@@ -163,6 +206,7 @@ impl AccountChain {
             balance: blocks.last().map_or(0, |block| block.balance),
             nonce: blocks.last().map_or(0, |block| block.nonce),
             consumed_sources,
+            clock: default_clock,
         }
     }
 
@@ -233,7 +277,7 @@ impl AccountChain {
         vclock.tick(&sid);
         self.balance = initial_balance;
         self.nonce = 1;
-        let timestamp = arxia_core::now_millis();
+        let timestamp = (self.clock)();
         let block_type = BlockType::Open { initial_balance };
         let hash = Block::compute_hash(
             &self.public_key_hex,
@@ -311,7 +355,7 @@ impl AccountChain {
             .last()
             .map(|b| b.hash.clone())
             .unwrap_or_default();
-        let timestamp = arxia_core::now_millis();
+        let timestamp = (self.clock)();
         let block_type = BlockType::Send {
             destination: destination.to_string(),
             amount,
@@ -432,7 +476,7 @@ impl AccountChain {
             .last()
             .map(|b| b.hash.clone())
             .unwrap_or_default();
-        let timestamp = arxia_core::now_millis();
+        let timestamp = (self.clock)();
         let block_type = BlockType::Receive {
             source_hash: send_block.hash.clone(),
         };
@@ -469,6 +513,7 @@ impl AccountChain {
     }
 }
 
+#[cfg(feature = "std")]
 impl Default for AccountChain {
     fn default() -> Self {
         Self::new()

@@ -8,16 +8,37 @@ license.workspace = true
 repository.workspace = true
 description = "Block Lattice implementation for the Arxia protocol"
 
+# Declared directly rather than workspace-inherited so default
+# features can be turned off (cargo ignores that override on inherited
+# dependencies). Versions match the workspace pins.
 [dependencies]
-arxia-core = { workspace = true }
-arxia-crypto = { workspace = true }
-arxia-storage = { workspace = true }
-ed25519-dalek = { workspace = true }
-blake3 = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-hex = { workspace = true }
-rand = { workspace = true }
+arxia-core = { path = "../arxia-core", default-features = false }
+arxia-crypto = { path = "../arxia-crypto", default-features = false }
+arxia-storage = { path = "../arxia-storage", default-features = false }
+ed25519-dalek = { version = "3.0", default-features = false, features = ["fast", "zeroize"] }
+blake3 = { version = "1.8", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+rand = { version = "0.10.2", optional = true }
+
+[features]
+# std (default) adds what needs an operating system: key generation
+# from OS entropy and the wall clock. Without it the crate keeps the
+# ledger, the wallet, persistence and every verification; the caller
+# supplies entropy and, if it has one, a clock.
+default = ["std"]
+std = [
+    "arxia-core/std",
+    "arxia-crypto/std",
+    "arxia-storage/std",
+    "ed25519-dalek/rand_core",
+    "blake3/std",
+    "serde/std",
+    "serde_json/std",
+    "hex/std",
+    "dep:rand",
+]
 
 [dev-dependencies]
 arxia-storage-redb = { workspace = true }

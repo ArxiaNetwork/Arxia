@@ -55,11 +55,21 @@
 
 use crate::block::Block;
 use crate::equivocation::EquivocationProof;
-use crate::issuance::{IssuanceCertificate, IssuancePolicy};
+use crate::issuance::IssuanceCertificate;
+#[cfg(feature = "std")]
+use crate::issuance::IssuancePolicy;
 use crate::reserve::ReserveCertificate;
 use crate::serialization::{from_compact_bytes, to_compact_bytes};
 use crate::wallet::{Wallet, WalletConfig};
 use crate::witness::WitnessConfirmation;
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use arxia_core::{ArxiaError, StorageFault};
 use arxia_storage::{BatchOp, StorageBackend};
 
@@ -102,6 +112,7 @@ impl<S: StorageBackend> DurableWallet<S> {
     ///   record does not decode.
     /// - Any ledger error if a stored block is refused on replay.
     /// - Any backend error.
+    #[cfg(feature = "std")]
     pub fn open(storage: S) -> Result<Self, ArxiaError> {
         Self::open_with_config(storage, WalletConfig::default())
     }
@@ -115,6 +126,7 @@ impl<S: StorageBackend> DurableWallet<S> {
     ///
     /// As [`DurableWallet::open`], plus any issuance error for a
     /// stored certificate the policy refuses.
+    #[cfg(feature = "std")]
     pub fn open_with_issuance(storage: S, policy: IssuancePolicy) -> Result<Self, ArxiaError> {
         Self::open_with_config(
             storage,
@@ -134,11 +146,31 @@ impl<S: StorageBackend> DurableWallet<S> {
     ///
     /// As [`DurableWallet::open`], plus any error for a stored
     /// certificate the configuration refuses.
-    pub fn open_with_config(mut storage: S, config: WalletConfig) -> Result<Self, ArxiaError> {
+    #[cfg(feature = "std")]
+    pub fn open_with_config(storage: S, config: WalletConfig) -> Result<Self, ArxiaError> {
+        Self::open_with_entropy(storage, config, || Wallet::new().seed())
+    }
+
+    /// As [`DurableWallet::open_with_config`], with the entropy for a
+    /// new signing seed supplied by the caller. `entropy` is called
+    /// only when the storage holds no wallet yet; it must return 32
+    /// bytes from a cryptographic source, such as the hardware random
+    /// generator of the device. This is the constructor for targets
+    /// without an operating system.
+    ///
+    /// # Errors
+    ///
+    /// As [`DurableWallet::open`], plus any error for a stored
+    /// certificate the configuration refuses.
+    pub fn open_with_entropy(
+        mut storage: S,
+        config: WalletConfig,
+        entropy: impl FnOnce() -> [u8; 32],
+    ) -> Result<Self, ArxiaError> {
         let seed = match storage.get(SEED_KEY)? {
             Some(bytes) => <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| undecodable())?,
             None => {
-                let seed = Wallet::new().seed();
+                let seed = entropy();
                 storage.put(SEED_KEY, &seed)?;
                 seed
             }
@@ -164,7 +196,7 @@ impl<S: StorageBackend> DurableWallet<S> {
             (false, Some(last)) => last.checked_add(1).ok_or_else(undecodable)?,
             (false, None) => return Err(undecodable()),
         };
-        let by_hash: std::collections::HashMap<String, Block> = blocks
+        let by_hash: alloc::collections::BTreeMap<String, Block> = blocks
             .iter()
             .map(|block| (block.hash.clone(), block.clone()))
             .collect();

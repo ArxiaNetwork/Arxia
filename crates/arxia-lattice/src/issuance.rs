@@ -33,6 +33,14 @@
 //! `[1B issuer index][64B signature]`. Three signatures take 236
 //! bytes, within the value limit of the flash backend.
 
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use arxia_core::{ArxiaError, IssuanceFault};
 use ed25519_dalek::SigningKey;
 
