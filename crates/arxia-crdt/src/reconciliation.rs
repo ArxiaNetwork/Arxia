@@ -23,6 +23,13 @@
 //!    ("phantom receives") or mismatched destinations are surfaced in
 //!    [`ReconciliationReport::rejected_receives`] and do NOT credit the
 //!    receiver's balance.
+//!
+//! # Earlier design
+//!
+//! This module belongs to the design that preceded witness settlement. It is
+//! not on the settlement path, which lives in `arxia-lattice` (see
+//! `docs/architecture/SETTLEMENT.md`). It is kept for reference and
+//! will be removed.
 
 use crate::pn_counter::PNCounter;
 use arxia_core::ArxiaError;

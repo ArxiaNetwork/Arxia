@@ -1,4 +1,11 @@
 //! Gossip protocol for block propagation and nonce synchronization.
+//!
+//! # Earlier design
+//!
+//! This crate belongs to the design that preceded witness settlement. It is
+//! not on the settlement path, which lives in `arxia-lattice` (see
+//! `docs/architecture/SETTLEMENT.md`). It is kept for reference and
+//! will be removed.
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]

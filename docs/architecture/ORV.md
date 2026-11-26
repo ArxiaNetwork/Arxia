@@ -1,5 +1,7 @@
 # Open Representative Voting (ORV) Specification
 
+> **Earlier design, kept for reference.** This page describes the design that preceded witness settlement. It is not on the settlement path and will be removed. Settlement as the code performs it today is described in [SETTLEMENT.md](SETTLEMENT.md).
+
 ## Overview
 
 ORV is Arxia's consensus mechanism, adapted from Nano's design with
