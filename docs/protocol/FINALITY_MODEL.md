@@ -1,5 +1,7 @@
 # Finality Model
 
+> **Earlier design, kept for reference.** This page describes the design that preceded witness settlement. It is not on the settlement path and will be removed. Settlement as the code performs it today is described in [SETTLEMENT.md](../architecture/SETTLEMENT.md).
+
 This document specifies Arxia's finality model: the four-tier assessment,
 the predicates that promote a block from one tier to the next, the
 conflict-resolution cascade, and the invariants that CRDT reconciliation

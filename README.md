@@ -252,6 +252,7 @@ vulnerability, see [SECURITY.md](SECURITY.md).
 ## Documentation
 
 - [Architecture overview](docs/architecture/OVERVIEW.md)
+- [Settlement](docs/architecture/SETTLEMENT.md)
 - [Finality model](docs/protocol/FINALITY_MODEL.md)
 - [Block serialization](docs/protocol/SERIALIZATION.md)
 - [Power-loss protocol for flash storage](docs/architecture/POWER_LOSS_PROTOCOL.md)

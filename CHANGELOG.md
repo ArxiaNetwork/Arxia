@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- New `docs/architecture/SETTLEMENT.md` describes settlement as the code performs it. The architecture overview is rewritten around it, `FINALITY.md` leads with the current meaning of the tiers, and the pages and modules of the earlier consensus design (ORV, reconciliation by hash, gossip nonce registry, earlier finality assessment) carry a notice that they are kept for reference and will be removed.
 - The README describes settlement as the code performs it: witnesses in radio reach, equivocation proofs, certified reserves and issuance certificates. The status lists are brought up to date, and the earlier consensus design is identified as kept for reference and due for removal.
 - Documentation and workspace metadata now describe Arxia as an offline settlement layer. Links point to https://github.com/ArxiaNetwork/Arxia and https://arxia.network, and the security contact is arxia.network@proton.me. No code behaviour or identifier changed.
 

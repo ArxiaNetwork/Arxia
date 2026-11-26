@@ -1,12 +1,25 @@
 # Finality Tiers
 
-## Overview
+## Tiers today
+
+The public names of the tiers are Local, Mesh, Batch and Anchored. Settlement as the code performs it is described in [SETTLEMENT.md](SETTLEMENT.md).
+
+| Tier | In this repository |
+|---|---|
+| Local | A payment from a certified reserve, accepted with no witness in reach. The amount at stake is the certified reserve. |
+| Mesh | A payment confirmed by witnesses in radio reach, above two thirds of the roster weight (`arxia_lattice::witness::assess`). |
+| Batch | Settlement direction, no code yet. |
+| Anchored | Settlement direction, no code yet. |
+
+The rest of this page describes the earlier finality assessment in `arxia-finality` (`assess_finality`, `FinalityLevel`, `FinalityLatch`). It is kept for reference, is not on the settlement path, and will be removed. Its tier conditions are not the ones above.
+
+## Earlier assessment: overview
 
 A payment in Arxia does not wait for one global ordering. Each block is assessed against tiers of increasing confidence: a small payment between neighbours confirms as soon as the nodes around it see it, and a larger one waits until more of the network has seen it. The full specification is in [`docs/protocol/FINALITY_MODEL.md`](../protocol/FINALITY_MODEL.md).
 
-## Tiers
+## Earlier assessment: tiers
 
-The public names of the tiers are Local, Mesh, Batch and Anchored. The code in this repository implements Local, Mesh and full consensus. The enum variants in `arxia-finality::FinalityLevel` carry the internal identifiers `Pending`, `L0`, `L1` and `L2`; renaming them is a separate engineering task.
+The earlier assessment implements conditions it calls Local, Mesh and full consensus. The enum variants in `arxia-finality::FinalityLevel` carry the internal identifiers `Pending`, `L0`, `L1` and `L2`; renaming them is a separate engineering task.
 
 | Tier (code identifier) | Condition |
 |---|---|
