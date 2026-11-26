@@ -11,7 +11,8 @@ authors = []
 arxia-core = { path = "../arxia-core" }
 arxia-crypto = { path = "../arxia-crypto" }
 arxia-gossip = { path = "../arxia-gossip" }
-serde = { workspace = true }
-
-[dev-dependencies]
+arxia-lattice = { path = "../arxia-lattice" }
+arxia-storage = { path = "../arxia-storage" }
 ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
