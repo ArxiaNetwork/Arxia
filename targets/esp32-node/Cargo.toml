@@ -1,0 +1,45 @@
+[package]
+name = "arxia-esp32-node"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95.0"
+license = "Apache-2.0 OR MIT"
+description = "Node firmware for the T-Beam, first stage: the wallet and the ledger on the device's own flash, checked at every boot over the serial line (no radio yet)"
+authors = []
+
+[[bin]]
+name = "arxia-esp32-node"
+path = "./src/bin/main.rs"
+
+[dependencies]
+# The protocol core, built without the standard library. Path
+# dependencies: this firmware is versioned with the crates it runs.
+arxia-lattice = { path = "../../crates/arxia-lattice", default-features = false }
+arxia-storage = { path = "../../crates/arxia-storage", default-features = false }
+arxia-storage-flash = { path = "../../crates/arxia-storage-flash", default-features = false }
+
+# The board: HAL, bootloader descriptor, heap, panic-to-serial, serial.
+# `unstable` is needed for the true random number generator, which is
+# what the signing seed is drawn from.
+esp-hal = { version = "~1.1.0", features = ["esp32", "unstable"] }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32"] }
+critical-section = "1.2.0"
+esp-alloc = "0.10.0"
+esp-backtrace = { version = "0.19.0", features = ["esp32", "panic-handler", "println"] }
+esp-println = { version = "0.17.0", features = ["esp32"] }
+
+# The flash driver and the blocking-to-async bridge, as in the bench
+# firmware.
+esp-storage = { version = "0.9.0", features = ["esp32", "critical-section"] }
+embassy-embedded-hal = { version = "0.6.0", default-features = false }
+
+[profile.dev]
+# The default debug profile is too slow and too big for
+# resource-constrained devices.
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug         = 2
+lto           = 'fat'
+opt-level     = 's'
