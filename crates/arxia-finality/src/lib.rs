@@ -71,6 +71,8 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod witness;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};

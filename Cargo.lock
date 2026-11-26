@@ -142,7 +142,10 @@ dependencies = [
  "arxia-core",
  "arxia-crypto",
  "arxia-gossip",
+ "arxia-lattice",
+ "arxia-storage",
  "ed25519-dalek",
+ "hex",
  "serde",
 ]
 

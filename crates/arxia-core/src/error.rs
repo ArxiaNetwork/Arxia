@@ -206,6 +206,13 @@ pub enum ArxiaError {
         fault: StorageFault,
     },
 
+    /// A witness roster or confirmation set was refused.
+    #[error("witness error: {fault}")]
+    Witness {
+        /// The specific witness fault.
+        fault: WitnessFault,
+    },
+
     /// An issuance policy or certificate was refused.
     #[error("issuance error: {fault}")]
     Issuance {
@@ -461,6 +468,28 @@ pub enum DidFault {
         /// The byte count the DID scheme requires.
         expected: usize,
     },
+}
+
+/// The specific fault behind an [`ArxiaError::Witness`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum WitnessFault {
+    /// The roster itself is malformed: empty, a zero weight, a
+    /// repeated key, or a total that overflows.
+    #[error("the witness roster is malformed")]
+    RosterInvalid,
+    /// The confirmed weight is not more than two thirds of the roster
+    /// total.
+    #[error("not final: confirmed weight {confirmed} of {total}")]
+    NotFinal {
+        /// Weight of the witnesses that confirmed the block.
+        confirmed: u64,
+        /// Total weight of the roster.
+        total: u64,
+    },
+    /// The bytes do not decode into a confirmation, or a block hash is
+    /// not 32 bytes of hex.
+    #[error("the confirmation could not be decoded")]
+    Undecodable,
 }
 
 /// The specific fault behind an [`ArxiaError::Issuance`].
