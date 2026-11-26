@@ -543,6 +543,17 @@ pub enum StorageFault {
         fault: FlashFault,
     },
 
+    /// A stored record does not decode back into the value it was
+    /// written from: wrong length, or content the decoder refuses.
+    #[error("a stored record could not be decoded")]
+    RecordUndecodable,
+
+    /// A write failed after the in-memory state had advanced. The
+    /// holder of the store must reopen it from storage before doing
+    /// further work; the last durable state is what reopening yields.
+    #[error("a write failed; reopen from storage before continuing")]
+    ReopenRequired,
+
     /// The backing engine reported a fault of its own (I/O error,
     /// internal corruption, transaction failure).
     ///

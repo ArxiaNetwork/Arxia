@@ -138,6 +138,34 @@ impl AccountChain {
         }
     }
 
+    /// Rebuild an account from its signing seed and its own blocks.
+    ///
+    /// `blocks` must be this account's chain as accepted by a ledger:
+    /// the caller has already validated it, so nothing is re-checked
+    /// here. Balance and position come from the last block; the set of
+    /// consumed sources comes from the RECEIVE blocks.
+    pub(crate) fn from_validated(seed: &[u8; 32], blocks: &[Block]) -> Self {
+        let signing_key = SigningKey::from_bytes(seed);
+        let verifying_key = signing_key.verifying_key();
+        let public_key_hex = hex::encode(verifying_key.as_bytes());
+        let consumed_sources = blocks
+            .iter()
+            .filter_map(|block| match &block.block_type {
+                BlockType::Receive { source_hash } => Some(source_hash.clone()),
+                _ => None,
+            })
+            .collect();
+        Self {
+            signing_key,
+            verifying_key,
+            public_key_hex,
+            chain: blocks.to_vec(),
+            balance: blocks.last().map_or(0, |block| block.balance),
+            nonce: blocks.last().map_or(0, |block| block.nonce),
+            consumed_sources,
+        }
+    }
+
     /// Full hex-encoded public key.
     pub fn id(&self) -> &str {
         &self.public_key_hex

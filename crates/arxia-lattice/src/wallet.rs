@@ -66,6 +66,41 @@ impl Wallet {
         }
     }
 
+    /// Rebuild a wallet from its signing seed and the blocks it had
+    /// accepted, in acceptance order. Every block goes through the
+    /// ledger rules again; the account state is then taken from the
+    /// ledger's copy of the account's own chain.
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Ledger::add_block`] for a block the ledger
+    /// refuses.
+    pub fn restore(
+        seed: &[u8; 32],
+        blocks: impl IntoIterator<Item = Block>,
+    ) -> Result<Self, ArxiaError> {
+        let mut ledger = Ledger::new();
+        for block in blocks {
+            ledger.add_block(block)?;
+        }
+        let account_id = AccountChain::from_validated(seed, &[]).id().to_string();
+        let own_blocks = ledger
+            .get_chain(&account_id)
+            .map_or(&[][..], |chain| chain.as_slice());
+        let account = AccountChain::from_validated(seed, own_blocks);
+        Ok(Self {
+            account,
+            ledger,
+            vclock: VectorClock::new(),
+        })
+    }
+
+    /// The 32-byte signing seed. This is the account's secret: whoever
+    /// holds it can sign for the account.
+    pub fn seed(&self) -> [u8; 32] {
+        self.account.signing_key().to_bytes()
+    }
+
     /// Hex-encoded public key of the account.
     pub fn id(&self) -> &str {
         self.account.id()
