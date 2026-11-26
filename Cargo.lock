@@ -185,12 +185,15 @@ version = "0.1.0"
 dependencies = [
  "arxia-core",
  "arxia-crypto",
+ "arxia-storage",
+ "arxia-storage-redb",
  "blake3",
  "ed25519-dalek",
  "hex",
  "rand",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

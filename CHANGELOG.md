@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `arxia_lattice::DurableWallet`: a wallet persisted through any `StorageBackend`. A signed block is returned only after storage has accepted it, so a device that loses power cannot come back having released a signature it no longer remembers. Opening replays every stored block through the ledger rules. `Wallet::restore` and `Wallet::seed` support it; `StorageFault` gains `RecordUndecodable` and `ReopenRequired`.
+
 - `arxia_lattice::Wallet`: an account together with the ledger that validates it. Blocks from another device enter through `Wallet::ingest` under the full ledger rules, and `Wallet::receive` credits a payment only when the receiver has replayed its funding. Every operation updates account and ledger together or leaves both untouched.
 
 - CI badge, Meshtastic disclaimer, and repository history note in `README.md` ([#22](https://github.com/ArxiaNetwork/Arxia/pull/22)).
