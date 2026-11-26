@@ -39,6 +39,8 @@
 //!
 //! - `w/e/<account, 32 bytes><0 or 1>`: the two blocks of an
 //!   equivocation proof, one record each.
+//! - `w/r/<reserve account, 32 bytes><index>`: the records of a
+//!   reserve certificate, when the wallet has a witness roster.
 //!
 //! All of them fit the limits of the flash backend.
 //!
@@ -52,8 +54,9 @@
 use crate::block::Block;
 use crate::equivocation::EquivocationProof;
 use crate::issuance::{IssuanceCertificate, IssuancePolicy};
+use crate::reserve::ReserveCertificate;
 use crate::serialization::{from_compact_bytes, to_compact_bytes};
-use crate::wallet::Wallet;
+use crate::wallet::{Wallet, WalletConfig};
 use arxia_core::{ArxiaError, StorageFault};
 use arxia_storage::{BatchOp, StorageBackend};
 
@@ -61,6 +64,7 @@ const SEED_KEY: &[u8] = b"w/k";
 const BLOCK_PREFIX: &[u8] = b"w/b/";
 const ISSUANCE_PREFIX: &[u8] = b"w/i/";
 const EQUIVOCATION_PREFIX: &[u8] = b"w/e/";
+const RESERVE_PREFIX: &[u8] = b"w/r/";
 
 /// A [`Wallet`] persisted through a storage backend.
 pub struct DurableWallet<S: StorageBackend> {
@@ -95,7 +99,7 @@ impl<S: StorageBackend> DurableWallet<S> {
     /// - Any ledger error if a stored block is refused on replay.
     /// - Any backend error.
     pub fn open(storage: S) -> Result<Self, ArxiaError> {
-        Self::open_inner(storage, None)
+        Self::open_with_config(storage, WalletConfig::default())
     }
 
     /// As [`DurableWallet::open`], under an issuance policy. Stored
@@ -108,10 +112,25 @@ impl<S: StorageBackend> DurableWallet<S> {
     /// As [`DurableWallet::open`], plus any issuance error for a
     /// stored certificate the policy refuses.
     pub fn open_with_issuance(storage: S, policy: IssuancePolicy) -> Result<Self, ArxiaError> {
-        Self::open_inner(storage, Some(policy))
+        Self::open_with_config(
+            storage,
+            WalletConfig {
+                issuance: Some(policy),
+                witnesses: None,
+            },
+        )
     }
 
-    fn open_inner(mut storage: S, policy: Option<IssuancePolicy>) -> Result<Self, ArxiaError> {
+    /// As [`DurableWallet::open`], under a configuration. Stored
+    /// issuance and reserve certificates are verified against it
+    /// before the blocks are replayed. The configuration is supplied
+    /// on every open and is not read from storage.
+    ///
+    /// # Errors
+    ///
+    /// As [`DurableWallet::open`], plus any error for a stored
+    /// certificate the configuration refuses.
+    pub fn open_with_config(mut storage: S, config: WalletConfig) -> Result<Self, ArxiaError> {
         let seed = match storage.get(SEED_KEY)? {
             Some(bytes) => <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| undecodable())?,
             None => {
@@ -131,23 +150,41 @@ impl<S: StorageBackend> DurableWallet<S> {
             .map(|record| from_compact_bytes(record).map_err(|_| undecodable()))
             .collect::<Result<Vec<Block>, ArxiaError>>()?;
         let stored_blocks = blocks.len() as u64;
-        let mut wallet = match policy {
-            None => Wallet::restore(&seed, blocks)?,
-            Some(policy) => {
-                let mut records: Vec<Vec<u8>> = Vec::new();
-                storage.scan_prefix(ISSUANCE_PREFIX, &mut |_key, value| {
-                    records.push(value.to_vec());
-                    true
-                })?;
-                let certificates = records
-                    .iter()
-                    .map(|record| {
-                        IssuanceCertificate::from_bytes(record).map_err(|_| undecodable())
-                    })
-                    .collect::<Result<Vec<_>, ArxiaError>>()?;
-                Wallet::restore_with_issuance(&seed, policy, &certificates, blocks)?
-            }
+        let issuance = if config.issuance.is_some() {
+            let mut records: Vec<Vec<u8>> = Vec::new();
+            storage.scan_prefix(ISSUANCE_PREFIX, &mut |_key, value| {
+                records.push(value.to_vec());
+                true
+            })?;
+            records
+                .iter()
+                .map(|record| IssuanceCertificate::from_bytes(record).map_err(|_| undecodable()))
+                .collect::<Result<Vec<_>, ArxiaError>>()?
+        } else {
+            Vec::new()
         };
+        let reserves = if config.witnesses.is_some() {
+            // One certificate per reserve account: its records share
+            // the account part of the key and come back in order.
+            let mut grouped: Vec<(Vec<u8>, Vec<Vec<u8>>)> = Vec::new();
+            storage.scan_prefix(RESERVE_PREFIX, &mut |key, value| {
+                let account = key[..key.len().saturating_sub(1)].to_vec();
+                match grouped.last_mut() {
+                    Some((held, records)) if *held == account => records.push(value.to_vec()),
+                    _ => grouped.push((account, vec![value.to_vec()])),
+                }
+                true
+            })?;
+            grouped
+                .iter()
+                .map(|(_account, records)| {
+                    ReserveCertificate::from_records(records).map_err(|_| undecodable())
+                })
+                .collect::<Result<Vec<_>, ArxiaError>>()?
+        } else {
+            Vec::new()
+        };
+        let mut wallet = Wallet::restore_with_config(&seed, config, &issuance, &reserves, blocks)?;
 
         // Proofs are applied after the replay: the blocks an account
         // signed before it was frozen were accepted at the time and
@@ -282,6 +319,62 @@ impl<S: StorageBackend> DurableWallet<S> {
             self.persist(block)?;
         }
         Ok(())
+    }
+
+    /// Accept a reserve and make it durable: the certificate first,
+    /// then the reserve account's opening and reserve blocks.
+    ///
+    /// # Errors
+    ///
+    /// As [`Wallet::ingest_reserve`], plus any backend error.
+    pub fn ingest_reserve(&mut self, certificate: &ReserveCertificate) -> Result<(), ArxiaError> {
+        self.ready()?;
+        self.wallet.ingest_reserve_certificate(certificate)?;
+        let outcome = (|| {
+            let account = hex::decode(certificate.account()).map_err(ArxiaError::HexDecode)?;
+            let records = certificate.to_records()?;
+            let keys: Vec<Vec<u8>> = (0..records.len())
+                .map(|index| {
+                    let mut key = RESERVE_PREFIX.to_vec();
+                    key.extend_from_slice(&account);
+                    // A certificate holds three blocks and at most one
+                    // confirmation per roster witness.
+                    key.push(index as u8);
+                    key
+                })
+                .collect();
+            let batch: Vec<BatchOp<'_>> = keys
+                .iter()
+                .zip(&records)
+                .map(|(key, value)| BatchOp::Put { key, value })
+                .collect();
+            self.storage.apply_batch(&batch)
+        })();
+        if outcome.is_err() {
+            self.reopen_required = true;
+            return outcome;
+        }
+        let (_funding, opening, reserve) = certificate.blocks();
+        self.ingest(opening)?;
+        self.ingest(reserve)
+    }
+
+    /// Credit a payment made from a reserve, as
+    /// [`Wallet::receive_from_reserve`]. Everything accepted is
+    /// durable before the RECEIVE is returned.
+    ///
+    /// # Errors
+    ///
+    /// As [`Wallet::receive_from_reserve`], plus any backend error.
+    pub fn receive_from_reserve(
+        &mut self,
+        certificate: &ReserveCertificate,
+        spends: &[Block],
+    ) -> Result<Block, ArxiaError> {
+        let payment = spends.last().ok_or(ArxiaError::NotSendBlock)?;
+        self.ingest_reserve(certificate)?;
+        self.ingest_all(spends)?;
+        self.receive(payment)
     }
 
     /// Accept an equivocation proof from another device and make it

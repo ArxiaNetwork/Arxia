@@ -38,8 +38,34 @@ use crate::chain::{AccountChain, VectorClock};
 use crate::equivocation::EquivocationProof;
 use crate::issuance::{IssuanceCertificate, IssuancePolicy};
 use crate::ledger::Ledger;
+use crate::reserve::ReserveCertificate;
 use crate::validation::verify_block;
+use crate::witness::WitnessRoster;
 use arxia_core::ArxiaError;
+
+/// What a wallet's ledger is configured with. Both parts are optional;
+/// the default has neither.
+#[derive(Debug, Clone, Default)]
+pub struct WalletConfig {
+    /// Who may bring value into the ledger. See [`crate::issuance`].
+    pub issuance: Option<IssuancePolicy>,
+    /// The witnesses the ledger recognises. See [`crate::witness`] and
+    /// [`crate::reserve`].
+    pub witnesses: Option<WitnessRoster>,
+}
+
+impl WalletConfig {
+    fn ledger(self) -> Ledger {
+        let mut ledger = match self.issuance {
+            Some(policy) => Ledger::with_issuance(policy),
+            None => Ledger::new(),
+        };
+        if let Some(roster) = self.witnesses {
+            ledger.set_witness_roster(roster);
+        }
+        ledger
+    }
+}
 
 /// An account together with the ledger that validates it.
 pub struct Wallet {
@@ -76,6 +102,41 @@ impl Wallet {
             ledger: Ledger::with_issuance(policy),
             vclock: VectorClock::new(),
         }
+    }
+
+    /// Create a wallet with a fresh keypair and an empty ledger built
+    /// from `config`.
+    pub fn with_config(config: WalletConfig) -> Self {
+        Self {
+            account: AccountChain::new(),
+            ledger: config.ledger(),
+            vclock: VectorClock::new(),
+        }
+    }
+
+    /// As [`Wallet::restore`], under a configuration. Issuance and
+    /// reserve certificates are verified and added before the blocks
+    /// are replayed.
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Ledger::add_issuance`], [`Ledger::add_reserve`]
+    /// or [`Ledger::add_block`].
+    pub fn restore_with_config(
+        seed: &[u8; 32],
+        config: WalletConfig,
+        issuance: &[IssuanceCertificate],
+        reserves: &[ReserveCertificate],
+        blocks: impl IntoIterator<Item = Block>,
+    ) -> Result<Self, ArxiaError> {
+        let mut ledger = config.ledger();
+        for certificate in issuance {
+            ledger.add_issuance(certificate)?;
+        }
+        for certificate in reserves {
+            ledger.add_reserve(certificate)?;
+        }
+        Self::replay(seed, ledger, blocks)
     }
 
     /// Rebuild a wallet from its signing seed and the blocks it had
@@ -253,6 +314,54 @@ impl Wallet {
     /// Any error of [`Ledger::add_equivocation`].
     pub fn ingest_equivocation(&mut self, proof: &EquivocationProof) -> Result<(), ArxiaError> {
         self.ledger.add_equivocation(proof)
+    }
+
+    /// Verify and keep a reserve certificate, without its blocks. See
+    /// [`Ledger::add_reserve`]. Most callers want
+    /// [`Wallet::ingest_reserve`].
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Ledger::add_reserve`].
+    pub fn ingest_reserve_certificate(
+        &mut self,
+        certificate: &ReserveCertificate,
+    ) -> Result<(), ArxiaError> {
+        self.ledger.add_reserve(certificate)
+    }
+
+    /// Accept a reserve: verify the certificate against the witness
+    /// roster, then take in the reserve account's opening and reserve
+    /// blocks. The funding history is not needed.
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Ledger::add_reserve`] or [`Wallet::ingest`].
+    pub fn ingest_reserve(&mut self, certificate: &ReserveCertificate) -> Result<(), ArxiaError> {
+        self.ledger.add_reserve(certificate)?;
+        let (_funding, opening, reserve) = certificate.blocks();
+        self.ingest(opening)?;
+        self.ingest(reserve)
+    }
+
+    /// Credit a payment made from a reserve. `spends` are the reserve
+    /// account's blocks after the certified one, in order; the last
+    /// one is the payment to this wallet.
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Wallet::ingest_reserve`], [`Wallet::ingest_all`]
+    /// or [`Wallet::receive`]. [`ArxiaError::NotSendBlock`] if `spends`
+    /// is empty.
+    pub fn receive_from_reserve(
+        &mut self,
+        certificate: &ReserveCertificate,
+        spends: &[Block],
+    ) -> Result<Block, ArxiaError> {
+        let payment = spends.last().ok_or(ArxiaError::NotSendBlock)?;
+        self.ingest_reserve(certificate)?;
+        self.ingest_all(spends)?;
+        self.receive(payment)
     }
 
     /// Accept a sequence of blocks in order, stopping at the first one

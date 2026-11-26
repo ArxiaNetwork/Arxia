@@ -14,5 +14,4 @@ arxia-gossip = { path = "../arxia-gossip" }
 arxia-lattice = { path = "../arxia-lattice" }
 arxia-storage = { path = "../arxia-storage" }
 ed25519-dalek = { workspace = true }
-hex = { workspace = true }
 serde = { workspace = true }
