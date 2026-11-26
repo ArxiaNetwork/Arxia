@@ -111,8 +111,9 @@ processes.
 - Radio drivers (LoRa, Bluetooth, SMS, satellite). `arxia-transport`
   provides the interface, signed messages, fragment splitting and
   reassembly, and a simulated link used in tests.
-- The ledger and the wallet do not build for the embedded target yet; they
-  run on hosts. The node firmware is not written.
+- The node firmware is a first stage (`targets/esp32-node`): the wallet and
+  the ledger build for the board and run a check at boot. It has not been
+  run on a board yet, and it does not use the radio.
 - The witness roster and the issuer keys are configuration. There is no
   on-ledger bond, no penalty for a witness, and no way yet to update a roster
   from the network.
@@ -223,8 +224,11 @@ Other members of the workspace:
 - `targets/esp32`: ESP32 target crate (`no_std`, radio driver not written
   yet).
 
-Outside the workspace: `targets/esp32-bench`, the T-Beam power-loss bench
-firmware, a standalone Cargo project built with the Xtensa toolchain.
+Outside the workspace, two standalone Cargo projects built with the Xtensa
+toolchain: `targets/esp32-bench`, the T-Beam power-loss bench firmware, and
+`targets/esp32-node`, the first stage of the node firmware: the wallet and
+the ledger on the board's own flash, checked at every boot over the serial
+line. It builds; it has not been run on a board yet, and it has no radio.
 
 ## Hardware
 

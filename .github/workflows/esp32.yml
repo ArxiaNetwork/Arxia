@@ -6,24 +6,28 @@ on:
     paths:
       - "targets/esp32/**"
       - "targets/esp32-bench/**"
+      - "targets/esp32-node/**"
       - "crates/arxia-core/**"
       - "crates/arxia-crypto/**"
       - "crates/arxia-lattice/**"
       - "crates/arxia-storage/**"
       - "crates/arxia-storage-flash/**"
       - "crates/arxia-flash-bench/**"
+      - "crates/arxia-transport/**"
       - ".github/workflows/esp32.yml"
   pull_request:
     branches: [main]
     paths:
       - "targets/esp32/**"
       - "targets/esp32-bench/**"
+      - "targets/esp32-node/**"
       - "crates/arxia-core/**"
       - "crates/arxia-crypto/**"
       - "crates/arxia-lattice/**"
       - "crates/arxia-storage/**"
       - "crates/arxia-storage-flash/**"
       - "crates/arxia-flash-bench/**"
+      - "crates/arxia-transport/**"
       - ".github/workflows/esp32.yml"
 
 env:
@@ -91,9 +95,18 @@ jobs:
       # esp toolchain that rust-toolchain.toml names.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "targets/esp32-bench -> target"
+          workspaces: |
+            targets/esp32-bench -> target
+            targets/esp32-node -> target
       - name: Build the bench firmware
         working-directory: targets/esp32-bench
+        run: |
+          source ~/export-esp.sh
+          cargo build --release
+          cargo fmt --all -- --check
+          cargo clippy --release -- -D warnings
+      - name: Build the node firmware
+        working-directory: targets/esp32-node
         run: |
           source ~/export-esp.sh
           cargo build --release
