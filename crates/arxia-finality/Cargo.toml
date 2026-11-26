@@ -15,3 +15,7 @@ arxia-lattice = { path = "../arxia-lattice" }
 arxia-storage = { path = "../arxia-storage" }
 ed25519-dalek = { workspace = true }
 serde = { workspace = true }
+
+[dev-dependencies]
+arxia-transport = { path = "../arxia-transport" }
+hex = { workspace = true }

@@ -144,7 +144,9 @@ dependencies = [
  "arxia-gossip",
  "arxia-lattice",
  "arxia-storage",
+ "arxia-transport",
  "ed25519-dalek",
+ "hex",
  "serde",
 ]
 

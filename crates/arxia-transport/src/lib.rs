@@ -42,8 +42,8 @@ pub mod sim;
 pub mod traits;
 
 pub use reassembly::{
-    Fragment, FragmentHeader, Reassembler, ReassemblyError, FRAGMENT_DOMAIN,
-    MAX_INFLIGHT_MESSAGES_PER_PEER,
+    fragment, Fragment, FragmentHeader, Reassembler, ReassemblyError, FRAGMENT_DOMAIN,
+    FRAGMENT_HEADER_LEN, MAX_INFLIGHT_MESSAGES_PER_PEER,
 };
 pub use sim::simulated::{SimulatedTransport, DEFAULT_INBOX_CAPACITY, DEFAULT_OUTBOX_CAPACITY};
 pub use traits::{
