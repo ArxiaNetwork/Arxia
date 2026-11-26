@@ -355,6 +355,11 @@ impl Ledger {
         Ok(())
     }
 
+    /// Every reserve certificate this ledger holds.
+    pub fn reserves(&self) -> impl Iterator<Item = &ReserveCertificate> {
+        self.reserves.values()
+    }
+
     /// The verified certificate held for a reserve account, if any.
     pub fn reserve_for(&self, account: &str) -> Option<&ReserveCertificate> {
         self.reserves.get(account)

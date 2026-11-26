@@ -160,6 +160,11 @@ impl ReserveCertificate {
         (&self.funding, &self.opening, &self.reserve)
     }
 
+    /// The witness confirmations of the reserve block.
+    pub fn confirmations(&self) -> &[WitnessConfirmation] {
+        &self.confirmations
+    }
+
     /// Check that the reserve block is final under `roster`.
     ///
     /// # Errors
