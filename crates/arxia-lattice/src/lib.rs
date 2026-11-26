@@ -15,6 +15,7 @@ pub mod ledger;
 pub mod serialization;
 pub mod validation;
 pub mod wallet;
+pub mod witness;
 
 pub use block::{Block, BlockType};
 pub use chain::{AccountChain, VectorClock};
