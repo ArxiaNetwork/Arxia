@@ -27,6 +27,16 @@
 //! offline_settlement balance  --data DIR --network NET
 //! ```
 //!
+//! A reserve, for paying where no witness is in reach, is a second
+//! device funded by an ordinary payment and then certified:
+//!
+//! ```text
+//! offline_settlement request  --data RESERVE --network NET --out BUNDLE
+//! offline_settlement witness  --data WITNESS --network NET --in BUNDLE --out CONFIRMATION
+//! offline_settlement reserve  --data RESERVE --network NET --confirmation FILE...
+//! offline_settlement receive  --data DIR --network NET --in BUNDLE --mode isolated
+//! ```
+//!
 //! Amounts are in micro-ARX.
 
 use std::error::Error;
@@ -35,7 +45,10 @@ use std::path::{Path, PathBuf};
 
 use arxia_finality::witness::{receive_final, Witness, WitnessRoster};
 use arxia_lattice::bundle::{decode, encode, Frame};
-use arxia_lattice::{DurableWallet, IssuanceCertificate, IssuancePolicy, WalletConfig};
+use arxia_lattice::witness::WitnessConfirmation;
+use arxia_lattice::{
+    BlockType, DurableWallet, IssuanceCertificate, IssuancePolicy, ReserveCertificate, WalletConfig,
+};
 use arxia_storage_redb::RedbStorage;
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
@@ -265,16 +278,85 @@ fn witness(flags: &Flags) -> Outcome<()> {
     Ok(())
 }
 
-fn receive(flags: &Flags) -> Outcome<()> {
-    let (mut wallet, network) = device(flags)?;
-    let frames = decode(&fs::read(flags.one("in")?)?)?;
-    let (payment, mut confirmations) = wallet.ingest_bundle(&frames)?;
+/// The confirmations in the files given as `--confirmation`.
+fn confirmation_files(flags: &Flags) -> Outcome<Vec<WitnessConfirmation>> {
+    let mut confirmations = Vec::new();
     for path in flags.all("confirmation") {
         for frame in decode(&fs::read(path)?)? {
             if let Frame::Confirmation(confirmation) = frame {
                 confirmations.push(confirmation);
             }
         }
+    }
+    Ok(confirmations)
+}
+
+/// Ask for a confirmation of this device's latest block: the bundle a
+/// witness needs to replay it.
+fn request(flags: &Flags) -> Outcome<()> {
+    let (wallet, _network) = device(flags)?;
+    let latest = wallet
+        .chain()
+        .last()
+        .ok_or("this device has no block yet")?
+        .clone();
+    fs::write(flags.one("out")?, encode(&wallet.payment_bundle(&latest)?)?)?;
+    Ok(())
+}
+
+/// Turn this device into a certified reserve. Its chain must be an
+/// empty opening followed by the RECEIVE of the funding payment, and
+/// the confirmations must be of that RECEIVE.
+fn reserve(flags: &Flags) -> Outcome<()> {
+    let (mut wallet, _network) = device(flags)?;
+    let [opening, received] = wallet.chain() else {
+        return Err("a reserve is an empty account that received exactly one payment".into());
+    };
+    let BlockType::Receive { source_hash } = &received.block_type else {
+        return Err("the second block of a reserve must be a RECEIVE".into());
+    };
+    let funding = wallet
+        .history()?
+        .into_iter()
+        .find(|block| block.hash == *source_hash)
+        .ok_or("the funding payment is not on this device")?;
+    let certificate = ReserveCertificate::new(
+        funding,
+        opening.clone(),
+        received.clone(),
+        confirmation_files(flags)?,
+    )?;
+    // Verified against the roster, then kept: every later payment
+    // from this device carries it.
+    wallet.ingest_reserve(&certificate)?;
+    println!("{}", certificate.amount());
+    Ok(())
+}
+
+fn receive(flags: &Flags) -> Outcome<()> {
+    let (mut wallet, network) = device(flags)?;
+    let frames = decode(&fs::read(flags.one("in")?)?)?;
+    let (payment, mut confirmations) = wallet.ingest_bundle(&frames)?;
+    confirmations.extend(confirmation_files(flags)?);
+    match flags.optional("mode")? {
+        None | Some("final") => {}
+        Some("isolated") => {
+            // No witness in reach: only a payment from a certified
+            // reserve is credited, and the ledger bounds it by the
+            // certified amount.
+            if wallet
+                .wallet()
+                .ledger()
+                .reserve_for(&payment.account)
+                .is_none()
+            {
+                return Err("an isolated payment must come from a certified reserve".into());
+            }
+            wallet.receive(&payment)?;
+            println!("{}", wallet.balance());
+            return Ok(());
+        }
+        Some(other) => return Err(format!("unknown mode '{other}'").into()),
     }
     // Credited only when the witnesses that confirmed this exact block
     // hold more than two thirds of the roster weight.
@@ -301,6 +383,8 @@ pub fn run(args: &[String]) -> Outcome<()> {
         "open" => open(&flags),
         "pay" => pay(&flags),
         "witness" => witness(&flags),
+        "request" => request(&flags),
+        "reserve" => reserve(&flags),
         "receive" => receive(&flags),
         "balance" => balance(&flags),
         other => Err(format!("unknown command '{other}'").into()),

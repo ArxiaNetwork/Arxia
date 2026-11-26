@@ -530,6 +530,10 @@ pub enum BundleFault {
     /// An item is too long to fit one frame.
     #[error("the item does not fit one frame")]
     TooLong,
+    /// Reserve blocks do not come in groups of three, or equivocation
+    /// blocks do not pair up.
+    #[error("the bundle carries an incomplete group of frames")]
+    IncompleteGroup,
     /// The bundle does not carry exactly one payment block.
     #[error("the bundle must carry exactly one payment")]
     PaymentCount,

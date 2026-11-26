@@ -290,6 +290,82 @@ fn a_restored_copy_of_a_wallet_cannot_pay_a_second_time() {
 }
 
 #[test]
+fn a_reserve_pays_a_receiver_with_no_witness_in_reach() {
+    let world = World::new();
+    let alice = world.device("alice");
+    let reserve = world.device("reserve");
+    let bob = world.device("bob");
+    world.open("alice", &alice, Some(100 * ARX));
+    world.open("reserve", &reserve, None);
+    world.open("bob", &bob, None);
+
+    // Alice funds the reserve with an ordinary, witnessed payment.
+    let funding = world.pay("alice", &reserve, 20 * ARX, "funding");
+    let (confirmations, _) = world.confirm(&funding, "funding");
+    world.receive("reserve", &funding, &confirmations);
+
+    // The witnesses confirm the reserve's RECEIVE; the reserve is
+    // certified.
+    let request = world.path("reserve.request");
+    ok(&[
+        "request",
+        "--data",
+        &world.path("reserve"),
+        "--network",
+        &world.network,
+        "--out",
+        &request,
+    ]);
+    let (confirmations, reasons) = world.confirm(Path::new(&request), "reserve");
+    assert_eq!(confirmations.len(), 3, "{reasons:?}");
+    let certify = |files: &[String]| -> Vec<String> {
+        let mut args = vec![
+            "reserve".to_string(),
+            "--data".into(),
+            world.path("reserve"),
+            "--network".into(),
+            world.network.clone(),
+        ];
+        for file in files {
+            args.push("--confirmation".into());
+            args.push(file.clone());
+        }
+        args
+    };
+    let too_few = certify(&confirmations[..2]);
+    let too_few: Vec<&str> = too_few.iter().map(String::as_str).collect();
+    assert!(refused(&too_few).contains("not final"));
+    let enough = certify(&confirmations);
+    let enough: Vec<&str> = enough.iter().map(String::as_str).collect();
+    assert_eq!(ok(&enough), (20 * ARX).to_string());
+
+    // Later, with no witness to ask, the reserve pays Bob.
+    let payment = world.pay("reserve", &bob, 5 * ARX, "reserve-to-bob");
+    let mut args = world.receive_args("bob", &payment, &[]);
+    args.extend(["--mode".to_string(), "isolated".to_string()]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    ok(&args);
+    assert_eq!(world.balance("bob"), 5 * ARX);
+    assert_eq!(world.balance("reserve"), 15 * ARX);
+}
+
+#[test]
+fn an_isolated_payment_from_an_ordinary_account_is_refused() {
+    let world = World::new();
+    let alice = world.device("alice");
+    let bob = world.device("bob");
+    world.open("alice", &alice, Some(100 * ARX));
+    world.open("bob", &bob, None);
+
+    let payment = world.pay("alice", &bob, 10 * ARX, "alice-to-bob");
+    let mut args = world.receive_args("bob", &payment, &[]);
+    args.extend(["--mode".to_string(), "isolated".to_string()]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    assert!(refused(&args).contains("certified reserve"));
+    assert_eq!(world.balance("bob"), 0);
+}
+
+#[test]
 fn a_balance_without_a_certificate_is_refused() {
     // A device is handed a certificate made out to another account.
     let world = World::new();

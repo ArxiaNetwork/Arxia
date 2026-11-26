@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Reserve certificates and equivocation proofs travel in bundles (frame tags 5 and 6). A payment carries the backing of its funds and every proof its sender knows of, and `ingest_bundle` applies items in a fixed order: issuance, reserves, history, proofs. The process-level example gains `request`, `reserve` and `receive --mode isolated`, and its tests cover a reserve paying a receiver with no witness in reach.
+
 - Convergence on settled blocks: a ledger that took in the block of an equivocating pair that did not become final now follows the witnesses. `Ledger::replace_with_settled` removes the held block and what the account built on it, where nothing settled or already received depends on them, and takes in the settled block; `Wallet::ingest` does it automatically and `DurableWallet` mirrors it on storage in one batch. Block sequence numbers on storage are no longer reused.
 
 - Settled blocks: `Ledger::add_settlement` records a block as final under the witness roster and keeps the confirmations. A settled block is exempt from the freeze that follows an equivocation, so the party that was paid, and whoever it pays next, are not affected by what the payer signs afterwards. `receive_final` keeps the confirmations of what it credits, bundles carry them, and `DurableWallet` stores them.
