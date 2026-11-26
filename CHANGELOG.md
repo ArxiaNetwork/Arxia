@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Transport: `arxia_transport::fragment` splits a message into signed fragments that each fit one MTU, and `Fragment::to_bytes` / `from_bytes` define their wire encoding, completing the sending side of the existing reassembly. A bundle of any size now crosses a link as packets of at most one MTU; tests settle a payment across the simulated radio link with reordered, repeated and lost packets.
+
 - Reserve certificates and equivocation proofs travel in bundles (frame tags 5 and 6). A payment carries the backing of its funds and every proof its sender knows of, and `ingest_bundle` applies items in a fixed order: issuance, reserves, history, proofs. The process-level example gains `request`, `reserve` and `receive --mode isolated`, and its tests cover a reserve paying a receiver with no witness in reach.
 
 - Convergence on settled blocks: a ledger that took in the block of an equivocating pair that did not become final now follows the witnesses. `Ledger::replace_with_settled` removes the held block and what the account built on it, where nothing settled or already received depends on them, and takes in the settled block; `Wallet::ingest` does it automatically and `DurableWallet` mirrors it on storage in one batch. Block sequence numbers on storage are no longer reused.

@@ -107,6 +107,17 @@ pub enum ReassemblyError {
     /// Fragment's `total` is zero (a logically impossible
     /// message — there's nothing to reassemble).
     EmptyMessage,
+    /// The bytes are too short to hold a fragment header.
+    Undecodable,
+    /// The link MTU leaves no room for a payload after the fragment
+    /// header.
+    MtuTooSmall {
+        /// The MTU that was given.
+        mtu: usize,
+    },
+    /// The message needs more fragments than a 16-bit count can
+    /// express at this MTU.
+    TooManyFragments,
     /// A fragment with the same (peer_pubkey, message_id, seq)
     /// was already received and its payload differs. This is
     /// the replay-with-mutation spoof from the audit.
@@ -128,6 +139,11 @@ impl std::fmt::Display for ReassemblyError {
                 write!(f, "fragment seq {seq} out of range (total {total})")
             }
             Self::EmptyMessage => f.write_str("fragment claims total=0 (no message to reassemble)"),
+            Self::Undecodable => f.write_str("bytes too short for a fragment header"),
+            Self::MtuTooSmall { mtu } => {
+                write!(f, "MTU {mtu} leaves no room for a fragment payload")
+            }
+            Self::TooManyFragments => f.write_str("message needs more than 65535 fragments"),
             Self::PayloadMismatch { seq } => {
                 write!(
                     f,
@@ -166,7 +182,106 @@ pub struct Fragment {
     pub payload: Vec<u8>,
 }
 
+/// Encoded length of a [`FragmentHeader`]: public key, message id,
+/// sequence, total, signature.
+pub const FRAGMENT_HEADER_LEN: usize = 32 + 16 + 2 + 2 + 64;
+
+/// Split `payload` into signed fragments that each fit `mtu` bytes
+/// once encoded with [`Fragment::to_bytes`].
+///
+/// This is the sending side of [`Reassembler::feed`]: feeding the
+/// returned fragments, in any order and with repetitions, yields
+/// `payload` back.
+///
+/// `message_id` identifies this message among those of the same
+/// sender; two messages in flight at once must not share one.
+///
+/// # Errors
+///
+/// - [`ReassemblyError::EmptyMessage`] if `payload` is empty.
+/// - [`ReassemblyError::MtuTooSmall`] if `mtu` does not exceed
+///   [`FRAGMENT_HEADER_LEN`].
+/// - [`ReassemblyError::TooManyFragments`] if the count does not fit
+///   16 bits.
+pub fn fragment(
+    signing_key: &ed25519_dalek::SigningKey,
+    message_id: [u8; 16],
+    payload: &[u8],
+    mtu: usize,
+) -> Result<Vec<Fragment>, ReassemblyError> {
+    if payload.is_empty() {
+        return Err(ReassemblyError::EmptyMessage);
+    }
+    let room = mtu
+        .checked_sub(FRAGMENT_HEADER_LEN)
+        .filter(|room| *room > 0)
+        .ok_or(ReassemblyError::MtuTooSmall { mtu })?;
+    let total = u16::try_from(payload.len().div_ceil(room))
+        .map_err(|_| ReassemblyError::TooManyFragments)?;
+    let peer_pubkey = signing_key.verifying_key().to_bytes();
+    Ok(payload
+        .chunks(room)
+        .zip(0u16..)
+        .map(|(chunk, seq)| {
+            let canonical = Fragment::canonical_bytes(&peer_pubkey, &message_id, seq, total, chunk);
+            Fragment {
+                header: FragmentHeader {
+                    peer_pubkey,
+                    message_id,
+                    seq,
+                    total,
+                    signature: arxia_crypto::sign(signing_key, &canonical),
+                },
+                payload: chunk.to_vec(),
+            }
+        })
+        .collect())
+}
+
 impl Fragment {
+    /// Encode for the wire: the header fields in declaration order,
+    /// integers big-endian, then the payload.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(FRAGMENT_HEADER_LEN + self.payload.len());
+        bytes.extend_from_slice(&self.header.peer_pubkey);
+        bytes.extend_from_slice(&self.header.message_id);
+        bytes.extend_from_slice(&self.header.seq.to_be_bytes());
+        bytes.extend_from_slice(&self.header.total.to_be_bytes());
+        bytes.extend_from_slice(&self.header.signature);
+        bytes.extend_from_slice(&self.payload);
+        bytes
+    }
+
+    /// Decode a fragment from the wire. The signature is not checked
+    /// here; [`Reassembler::feed`] does that.
+    ///
+    /// # Errors
+    ///
+    /// [`ReassemblyError::Undecodable`] if `bytes` is shorter than a
+    /// header.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ReassemblyError> {
+        if bytes.len() < FRAGMENT_HEADER_LEN {
+            return Err(ReassemblyError::Undecodable);
+        }
+        let (header, payload) = bytes.split_at(FRAGMENT_HEADER_LEN);
+        let mut peer_pubkey = [0u8; 32];
+        let mut message_id = [0u8; 16];
+        let mut signature = [0u8; 64];
+        peer_pubkey.copy_from_slice(&header[..32]);
+        message_id.copy_from_slice(&header[32..48]);
+        signature.copy_from_slice(&header[52..]);
+        Ok(Self {
+            header: FragmentHeader {
+                peer_pubkey,
+                message_id,
+                seq: u16::from_be_bytes([header[48], header[49]]),
+                total: u16::from_be_bytes([header[50], header[51]]),
+                signature,
+            },
+            payload: payload.to_vec(),
+        })
+    }
+
     /// Build the canonical bytes that the sender signs.
     pub fn canonical_bytes(
         peer_pubkey: &[u8; 32],
