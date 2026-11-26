@@ -65,6 +65,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install the Xtensa toolchain
+        env:
+          # espup queries the GitHub API to resolve the release. Without
+          # a token those calls share the runner's anonymous rate limit
+          # and can be refused; the job token lifts that limit.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Both espup and the Xtensa Rust release are pinned, so a new
           # upstream release cannot change this job. 1.95.0.0 is the
@@ -74,8 +79,8 @@ jobs:
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 \
             https://github.com/esp-rs/espup/releases/download/v0.17.1/espup-x86_64-unknown-linux-gnu -o espup
           chmod a+x espup
-          # espup downloads from GitHub release assets, which can answer
-          # 504 for a while: retry the whole install before giving up.
+          # espup downloads from GitHub release assets, which can fail
+          # for a while: retry the whole install before giving up.
           for attempt in 1 2 3; do
             ./espup install --targets esp32 --toolchain-version 1.95.0.0 && exit 0
             echo "espup install failed (attempt $attempt), retrying in 30 s"
